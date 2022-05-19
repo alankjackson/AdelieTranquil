@@ -10,3 +10,11 @@ public
 static
 themes
 wview-archive.sdb
+index.html
+favicon.ico
+index.Rmd
+config.toml
+keepold.RData
+netlify.toml
+.Rproj.user_lessold
+.Rproj.user_old
