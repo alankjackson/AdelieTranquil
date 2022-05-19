@@ -1,0 +1,593 @@
+---
+title: Conversion from wview to weewx weather station software - Part 1, data cleanup
+author: Alan Jackson
+date: '2019-01-22'
+slug: conversion-from-wview-to-weewx-weather-station-software
+categories:
+  - Weather
+tags:
+  - weewx
+---
+
+##  Personal weather station conversion
+
+I have been running wview since June 23, 2012. It has been a reliable
+workhorse,  but it doesn't appear to be maintained any longer, and it does have a couple of issues. The new, improved open-source product
+seems to be [weewx](http://www.weewx.com), so I'm migrating to that one.
+
+This is the story of that conversion.
+
+##  Preliminaries
+
+I know that my old database has some bad data in it, so the first 
+thing I want to do is figure out where that bad data is, and fix it before I migrate the database.
+
+For example, there were a few days when moisture got to a plug and
+caused false bucket-tipping signals, resulting in a 50 inch
+rainfall.
+
+Then my humidity sensor failed, causing negative dewpoints and
+ridiculously low humidities.
+
+It would be cool to do this in a *reproducible* fashion with R, so 
+let's go that route. 
+
+```{r open database and examine}
+
+library(DBI)
+library(tidyverse)
+library(dbplyr)
+library(lubridate)
+library(tsibble)
+library(DescTools)
+
+
+#   Let's create a general function for plotting where NA's live
+
+PlotNA <- function(df, Variable){
+  #   Pull out just NA's and then build select criteria around them
+  V <- enquo(Variable)
+  runs <- 
+  df %>% 
+    select(dateTime, !!V) %>% 
+    filter(is.na(!!V)) %>% 
+    mutate(diffs=(as.numeric(dateTime)-lag(as.numeric(dateTime)))/300) # run length
+    
+    NAlocations <-
+    rle(runs$diffs) %>%
+      unclass() %>%
+      as.data.frame() %>%
+      mutate(end = cumsum(lengths),
+           start = c(1, lag(end)[-1] + 1)) %>%
+      select(c(1,2,4,3)) %>% # To re-order start before end for display
+      filter(lengths>1)  
+    #  create a tibble of start stop times - widen interval by 1 hour
+  Startstop <- 
+    tibble(Start=runs[NAlocations$start,]$dateTime-300*12,
+           Stop =runs[NAlocations$end , ]$dateTime+300*12)
+  
+  #   build a plot for each interval
+  
+  for (i in 1:nrow(Startstop)) {
+    temp <- 
+    df %>% 
+      filter(between(dateTime, 
+                        Startstop$Start[i], 
+                        Startstop$Stop[i])) %>% 
+      mutate(dateTime=as_datetime(dateTime)) %>% 
+      select(dateTime, outTemp)
+    
+      print(ggplot(data=temp,aes(x=dateTime,
+                                 y=!!V)) + 
+          geom_point() +
+          scale_x_datetime(date_labels = "%Y-%m-%d")
+        )
+  }
+}
+
+database <- "/home/ajackson/Dropbox/Rprojects/AdelieTranquil/wview-archive.sdb"
+
+#   Set connection to database
+
+db <- DBI::dbConnect(RSQLite::SQLite(), database)
+
+#   Take a peek
+
+src_dbi(db)
+
+#   database contains only one table, "archive"
+
+database <- tbl(db,"archive") %>% collect()
+database
+```
+
+##  Digging into the data
+
+Let's do some field summaries, looking at max, min values and nulls
+to start getting a feel for the issue, and then do some plots.
+
+Originally I thought about doing all the plots at once, but really, 
+better to work through each variable one at a time, since each one may 
+have unique issues.
+
+```{r summarize and plot suspect fields}
+
+database %>% 
+  select(dateTime,barometer:dewpoint) %>% 
+  collect() %>% 
+  summarise_all(funs(min, max), na.rm = TRUE)
+
+# count the NA's in each column
+
+map(database, ~sum(is.na(.)))
+
+```
+
+Pressures are okay. But not much else. Temperature, Humidity, Windspeed
+and direction all have NA issues. 
+
+##  Look at dateTime
+
+dateTime is in seconds since some epoch - probably Jan 1, 1970.
+The data is stored every 5 minutes (NWS standard).
+The histogram shows some gaps - times when the station was down for
+an extended period of time because I was out of town and unable
+to restart things.
+
+It would be interesting to plot the gaps - I'll have to think 
+about how to do that.
+
+
+```{r Look at dateTime}
+
+database %>% 
+  mutate(dateTime=as_datetime(dateTime)) %>% 
+  ggplot(aes(x=dateTime)) +
+  geom_histogram()
+
+# Greatest common denominator. It should be 300, or 5 minutes
+GCD(database$dateTime)
+# But it is 60, one minute. How can that be?
+#   let's find anyone not divisible by 300
+
+database %>% 
+  mutate(a=dateTime/300) %>% 
+  filter(as.integer(a)!=a) %>% 
+  mutate(dateTime=as_datetime(dateTime))  
+
+#   Wow. So embedded in almost 700,000 observations are 11 wonky ones.
+
+# What does it look like around these observations?
+# Looks like they live in short gaps
+# I think I will just delete them. They are likely to cause more
+# trouble than they are worth.
+
+database <- 
+  database %>% 
+  mutate(a=dateTime/300) %>% 
+  filter(as.integer(a)==a)  
+
+#   Let's check out tsibble and see if it makes life easier.
+
+df <- database %>% 
+  mutate(dateTime=as_datetime(dateTime)) %>%
+  as_tsibble(key=id(), index=dateTime)
+
+has_gaps(df)
+count_gaps(df)  
+
+#   Let's be really tidy and fill the gaps.
+
+df <- df %>% 
+  fill_gaps(.full=TRUE)
+
+```
+
+
+
+##  pressure
+
+So there are three values here, barometer, pressure, and altimeter.
+Barometer is the raw value received from the station and represents
+what the National Weather Service calls mean sea level pressure, 
+which uses the temperature of the air to move the measured pressure 
+to sea level. Pressure is "Station Pressure", or the actual raw
+pressure at the station - here actually back-calculated from the
+barometer value. Altimeter is the pressure moved to mean sea level
+using an average temperature gradient. This last is what is usually
+reported on TV.
+
+So let's plot up all three of these just for grins. They should
+more or less parallel each other.
+
+```{r pressure}
+
+df %>% 
+  select(barometer, pressure, altimeter) %>% 
+  gather(key="Measurement", value=Value, na.rm=TRUE) %>% 
+  ggplot(aes(x=Value)) + 
+  geom_histogram(binwidth=0.01) + 
+  facet_grid(Measurement ~ .)
+
+df %>% 
+  select(dateTime, barometer, pressure, altimeter) %>% 
+  gather(key="Measurement", value=Value, -dateTime, na.rm=TRUE) %>% 
+  ggplot(aes(x=dateTime, y=Value, color=Measurement)) + 
+  geom_line()  
+
+```
+
+From the histograms there are no obvious data busts, so hopefully
+these fields, at least, will not need to be repaired. 
+
+##  Temperatures
+
+inTemp is inside temperature, outTemp is outside temperature. Let's
+look at plots similar to what we did for pressure.
+
+I should note thet the station console sits above my desktop PC,
+and so always reads an inside temperature about 5 or so degrees 
+warmer than the rest of the house.
+
+```{r temperature}
+
+df %>% 
+  select(inTemp, outTemp) %>% 
+  gather(key="Measurement", value=Value, na.rm=TRUE) %>% 
+  ggplot(aes(x=Value)) + 
+  geom_histogram(binwidth=1) + 
+  facet_grid(Measurement ~ .)
+
+df %>% 
+  select(dateTime, inTemp, outTemp) %>% 
+  gather(key="Measurement", value=Value, -dateTime, na.rm=TRUE) %>% 
+  ggplot(aes(x=dateTime, y=Value)) + 
+  geom_line(na.rm = TRUE) +
+  facet_grid(Measurement ~ .)
+
+# Just for fun, let's plot where the NA's live. 
+
+
+PlotNA(df, outTemp)
+
+```
+
+
+##  Humidity
+
+My humidity sensor started failing sometime in late 2018, so I know 
+there are bogus values in there. But where? I'd like to wipe them
+out, replace them with NA's so that any statistics are minimally
+affected. Let's see what we can do. I will include dewpoint, because
+that is calculated from the humidity (and temperature) and is actually
+where I first noticed bad humidity values.
+
+```{r humidity}
+
+# start with histograms
+
+df %>% 
+  select(inHumidity, outHumidity, dewpoint) %>% 
+  gather(key="Measurement", value=Value, na.rm=TRUE) %>% 
+  ggplot(aes(x=Value)) + 
+  geom_histogram(binwidth=2) + 
+  facet_grid(Measurement ~ .)
+
+df %>% 
+  select(dateTime, inHumidity, outHumidity, dewpoint) %>% 
+  gather(key="Measurement", value=Value, -dateTime, na.rm=TRUE) %>% 
+  ggplot(aes(x=dateTime, y=Value, color=Measurement)) + 
+  geom_line(na.rm = TRUE) +  
+  facet_grid(Measurement ~ .)
+
+```
+
+Hmmm... The line plot seems to show that the humidity data started
+going bad in late 2017. That is sad - that would be a lot of data to
+toss out. Let's pull off the data from 2017-today and look more 
+closely to better understand the issues. Certainly the low humidity
+values look okay until late 2018, only the high values look bad 
+earlier.
+
+```{r recent humidity, warnings=FALSE, message=FALSE}
+
+df %>% 
+  select(dateTime, outHumidity, dewpoint) %>% 
+  filter(dateTime>ymd("2016-1-1")) %>% 
+  drop_na(outHumidity) %>% 
+  gather(key="Measurement", value=Value, -dateTime, na.rm=TRUE) %>% 
+  ggplot(aes(x=dateTime, y=Value, color=Measurement)) + 
+  geom_line(na.rm = TRUE) + 
+  facet_grid(Measurement ~ .)
+
+#   Let's just look at the maximum daily values
+
+recent <- 
+  df %>% 
+  select(dateTime, outHumidity) %>% 
+  filter((dateTime>ymd("2017-1-1"))  )
+
+# Find max and min in a week long tiled window (a week helps smooth)
+
+  MaxHumidity <- tile_dbl(recent$outHumidity, 
+                               max,
+                               na.rm = TRUE,
+                               .size=288*7) %>% 
+                 na_if(.,Inf) %>% 
+                 na_if(.,-Inf) 
+  MinHumidity <- tile_dbl(recent$outHumidity, 
+                               min,
+                               na.rm = TRUE,
+                               .size=288*7) %>% 
+                 na_if(.,Inf) %>% 
+                 na_if(.,-Inf) 
+ Days <-  seq(min(recent$dateTime), max(recent$dateTime), by="weeks")
+ 
+ tibble(dateTime=Days, 
+            maxHumidity=MaxHumidity, 
+            minHumidity=MinHumidity) %>% 
+   gather(key="Measurement", value=Value, -dateTime ) %>% 
+   ggplot(aes(x=dateTime, y=Value, color=Measurement)) + 
+   geom_line(na.rm=FALSE)
+
+```
+
+Wow, this is sad. The maximum humidity looks bad starting about
+July of 2017, while the minimum looks okay until about September
+of 2018. What to do? (Actually, starting at 
+2017-07-15 20:05:00). Good data returns on December 22 2018 at 1:00 PM
+when I replaced the temperature and humidity sensor.
+Clearly from August 2018 until sensor replacement, the data is
+irretrievably bad. Before then it is tempting to assume the minimum
+humidity is okay, and try to correct the maximum and stretch the ones
+in between. But that seems like a bad idea. Instead, I will save the
+bad data off to a file of its own, and replace it all with NA.
+
+```{r clean up humidity}
+
+#   Pull out bad segment and save
+
+Baddata <- 
+  df %>% 
+  select(dateTime, outHumidity, dewpoint) %>% 
+  filter(between(dateTime,ymd_hms("2017-07-15 20:05:00"),
+                          ymd_hms("2018-12-22 13:00:00"))) %>% 
+  saveRDS("/home/ajackson/Dropbox/weather/BadHumidityData2017-2018.rds")
+
+#   Now turn those values into NA's
+
+database <- 
+  database %>% 
+  mutate(a=as_datetime(dateTime)) %>% # add a datetime
+  mutate(outHumidity=ifelse(between(a,
+                               ymd_hms("2017-07-15 20:05:00"),
+                               ymd_hms("2018-12-22 13:00:00")),
+                            NA,
+                            outHumidity)) %>% 
+  mutate(dewpoint   =ifelse(between(a,
+                               ymd_hms("2017-07-15 20:05:00"),
+                               ymd_hms("2018-12-22 13:00:00")),
+                            NA,
+                            dewpoint)) %>% 
+  select(-a)  # remove the datetime
+
+#   Check it
+
+database %>% 
+  select(dateTime, outHumidity, dewpoint) %>% 
+  mutate(dateTime=as_datetime(dateTime)) %>% # add a datetime
+  filter(dateTime>ymd("2016-1-1")) %>% 
+  gather(key="Measurement", value=Value, -dateTime, na.rm=FALSE) %>% 
+  ggplot(aes(x=dateTime, y=Value, color=Measurement)) + 
+  geom_line(na.rm = FALSE) + 
+  facet_grid(Measurement ~ .)
+```
+
+##    The Wind
+
+Let's look at the wind data. It frankly isn't very good, because
+I would need a super tall pole to get the sensors up above the
+houses, but we can look for obvious busts and clean those up.
+
+```{r wind}
+
+# First look at speed and gust
+
+df %>% 
+  select(dateTime, windSpeed, windGust) %>% 
+  gather(key="Measurement", value=Value, -dateTime, na.rm=TRUE) %>% 
+  ggplot(aes(x=dateTime, y=Value, color=Measurement)) + 
+  geom_line(na.rm = TRUE) + 
+  facet_grid(Measurement ~ .)
+
+# Wind and Gust speeds look okay, let's look at direction
+
+df %>% 
+  select(dateTime, windDir, windGustDir) %>% 
+  gather(key="Measurement", value=Value, -dateTime, na.rm=TRUE) %>% 
+  ggplot(aes(x=dateTime, y=Value, color=Measurement)) + 
+  geom_line(na.rm = TRUE) + 
+  facet_grid(Measurement ~ .)
+
+#     Oops. Looks like some bad direction data. Simple enough,
+#     we'll just NA anything <0, since valid values are 0-359
+
+df %>% 
+  select(dateTime, windDir, windGustDir) %>% 
+  mutate(windDir=ifelse(windDir<0, NA, windDir)) %>% 
+  gather(key="Measurement", value=Value, -dateTime, na.rm=TRUE) %>% 
+  ggplot(aes(x=dateTime, y=Value, color=Measurement)) + 
+  geom_point(na.rm = TRUE) + 
+  facet_grid(Measurement ~ .)
+
+#   Okay, looks good. Let's repair the original
+
+database <- 
+  database %>% 
+  mutate(windDir=ifelse(windDir<0, NA, windDir)) 
+
+
+```
+
+##    Rain
+
+Almost done! We know there were some issues with rain to to moisture
+in a connection causing false bucket tips to be recorded, so we will
+need to find those false readings and eliminate them
+
+```{r rain}
+
+#   The absurd values make it hard to look at the more normal
+#   values, so let's just get rid of the offending days first
+
+df %>% 
+  select(dateTime, rainRate) %>% 
+  filter(between(dateTime, 
+                 ymd_hms("2018-10-19 00:00:00"), 
+                 ymd_hms("2018-10-24 00:00:00"))) %>% 
+  mutate(newrate=ifelse(between(dateTime, 
+                                ymd_hms("2018-10-21 00:00:00"),
+                                ymd_hms("2018-10-22 23:59:59")), 
+                        NA, 
+                        rainRate)) %>% 
+  gather(key="Measurement", value=Value, -dateTime, na.rm=TRUE) %>% 
+  ggplot(aes(x=dateTime, y=Value, color=Measurement)) + 
+  geom_line() + 
+  facet_grid(Measurement ~ .)
+
+# Now we can do a histogram
+
+df %>% 
+  select(rainRate) %>% 
+  mutate(newrate=ifelse(between(dateTime, 
+                                ymd_hms("2018-10-21 00:00:00"),
+                                ymd_hms("2018-10-22 23:59:59")), 
+                        NA, 
+                        rainRate)) %>% 
+  ggplot(aes(x=log10(newrate))) + 
+  geom_histogram(binwidth=0.1)  
+
+# Line plot
+
+df %>% 
+  select(dateTime, rainRate) %>% 
+  mutate(newrate=ifelse(between(dateTime, 
+                                ymd_hms("2018-10-21 00:00:00"),
+                                ymd_hms("2018-10-22 23:59:59")), 
+                        NA, 
+                        rainRate)) %>% 
+  ggplot(aes(x=dateTime, y=newrate )) + 
+  geom_line(na.rm = TRUE) 
+
+#   Some suspicious values. March 8, 2018 has an isolated 
+#   26.18 in/hr spike. I'm going to eliminate it. I need a way to
+#   find spikes and plot nearby values. Let's look for anything above
+#   12 in/hr, and pull out 1 hour on each side, and plot it.
+
+highrates <- 
+  df %>% 
+  select(dateTime, rainRate) %>% 
+  filter(!between(dateTime, 
+                 ymd_hms("2018-10-21 00:00:00"), 
+                 ymd_hms("2018-10-23 00:00:00"))) %>% 
+  filter(rainRate>12)
+  
+Startstop <- 
+    tibble(Start=highrates$dateTime-minutes(60),
+           Stop =highrates$dateTime+minutes(60))
+
+for (i in 1:nrow(Startstop)) {
+    temp <- 
+    df %>% 
+      filter(between(dateTime, 
+                        Startstop$Start[i], 
+                        Startstop$Stop[i])) %>% 
+      select(dateTime, rainRate)
+    
+      print(ggplot(data=temp,aes(x=dateTime, y=rainRate)) + 
+          geom_point() +
+          geom_line() +
+          scale_x_datetime(date_labels = "%Y-%m-%d %H:%M")+
+          theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      )
+} 
+
+```
+
+There are three events that I will eliminate, they represent times
+when I was working on the station and jostled the raingauge:
+2018-12-22 18:50, 2018-03-08 20:00, and 2018-11-07 21:05
+
+Note that I have looked at nearby stations and confirmed the
+massive rainfalls on the other dates, like June 12, 2016.
+
+So now we will remove those records and the hcorresponding rain
+total, and then look at the total to see if there are any other
+issues.
+
+```{r remove bad rain records}
+
+baddates <- ymd_hms(c("2018-12-22 18:50:00", "2018-03-08 20:00:00", "2018-11-07 21:05:00"))
+
+database <-   
+  database %>% 
+  mutate(a=as_datetime(dateTime)) %>% # add a datetime
+  mutate(rainRate=ifelse(between(a, 
+                 ymd_hms("2018-10-21 00:00:00"), 
+                 ymd_hms("2018-10-23 00:00:00")),
+                            NA,
+                            rainRate)) %>% 
+  mutate(rain       =ifelse(between(a,
+                 ymd_hms("2018-10-21 00:00:00"), 
+                 ymd_hms("2018-10-23 00:00:00")),
+                            NA,
+                            rain)) %>% 
+  mutate(rainRate=ifelse(a %in% baddates, NA, rainRate)) %>% 
+  mutate(rain    =ifelse(a %in% baddates, NA, rain    )) %>% 
+  select(-a)  # remove the datetime
+
+df <- database %>% 
+  mutate(dateTime=as_datetime(dateTime)) %>%
+  as_tsibble(key=id(), index=dateTime) %>% 
+  fill_gaps(.full=TRUE)
+
+#   and now for the rain totals
+
+df %>% 
+  select(dateTime, rain) %>% 
+  ggplot(aes(x=dateTime, y=rain)) + 
+  geom_line() 
+
+#   and just for fun, daily totals
+ raintot <- tile_dbl(df$rain, 
+                     sum,
+                     na.rm = TRUE,
+                     .size=288) 
+ 
+ Days <-  seq(min(df$dateTime), max(df$dateTime), by="days")
+ 
+ tibble(dateTime=Days, dailyrain=raintot) %>% 
+   ggplot(aes(x=dateTime, y=dailyrain)) + 
+   geom_line(na.rm=FALSE) 
+
+```
+
+##  Put it all back
+
+Final step in the data cleanup is to create a new database with the
+newly cleaned up data.
+
+```{r put it back, eval=FALSE}
+
+databasename <- "/home/ajackson/Dropbox/weather/weewx.sdb"
+
+#   Set connection to database
+
+dbnew <- DBI::dbConnect(RSQLite::SQLite(), databasename)
+
+#   Create a table and write to it
+
+dbWriteTable(dbnew, "archive", database)
+
+```
+

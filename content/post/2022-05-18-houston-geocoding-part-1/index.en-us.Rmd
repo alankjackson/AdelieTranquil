@@ -1,0 +1,184 @@
+---
+title: Houston Geocoding - Part 1
+author: Alan Jackson
+date: '2022-05-18'
+slug: [Houston_Geocoding-Part-1]
+categories:
+  - Geocoding
+tags:
+  - Houston
+  - Mapping
+keywords:
+  - tech
+---
+
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(leaflet)
+
+googlecrs <- 4326
+
+path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/CoH_Address_Points/"
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Geocoding
+
+Attaching a Lat-Long to a street address is not an easy task. I have tried a variety
+of freely available geocoders, and have found all of them to be lacking for various
+reasons. See one of my earliest posts on this blog for more details.
+
+Finally, I discovered that the city of Houston has made available a file from their
+GIS group that has most of the addresses and associated Lat-Longs for the city
+(a total of 1,480,215 records when I downloaded it). So
+I decided that I would create my own geocoder.
+
+The first step was to download the 
+[address file](https://cohgis-mycity.opendata.arcgis.com/search?q=address) 
+from the city, and try to both understand what was in it, and do whatever cleanup
+might be necessary.
+
+This first part is all about preparing the master file for the geocoding process.
+The actual geocoder will be covered in part 2.
+
+I should note at this point that it appears that the locations in the file refer to
+either the approximate center of the building with that address, or to the center
+of the plat if there is no building. At least usually.
+
+The actual code I used to explore and clean the data may be found at my
+[github site](https://github.com/alankjackson/Curated_Data/blob/main/CoH_Address_Point_data.Rmd).
+
+### Contents of the file
+
+The file contains 3 different ID field, OBJECTID, ID, and ADDR_ID. OBJECTID is a 
+unique value for each entry. ID is something else, and is not a unique identifier 
+for each entry. ADDR_ID is almost unique to each entry, falling one short. For
+future work, I will retain and use OBJECTID as my key field.
+
+TYPES is a field that is apparently somewhat free-form, since it has entries like
+"COMMERCIAL" as well as "Commercial", "Residential" as well as "RES". It could be
+very useful, except that it is only filled in for about 300,000 of the entries, so
+falling far short of being comprehensive.
+
+STATUS appears to be mostly about the origin of the data, with the greatest number
+of records having a status of "COH" for "City of Houston". Also popular is "CP",
+which I suspect means "Center Point". "ABD" seems clear enough - abandoned. The
+code "CNTY" clearly means "County". The other, fairly rarely codes used are a
+mystery: UTA, RVSG, PRE, and OOR.
+
+The STREET_NUM field is pretty good except that sometimes (11,977 records) the 
+number has some extra stuff, probably designating an apartment, a duplex, or
+something similar like "A" or "1/2", or "#3". I made a decision to pull this
+stuff out of the numeric address and store it separately, since it is likely to 
+cause problems later on and really of only marginal interest for geocoding.
+
+There are 66 street numbers that are larger than 50,000. Spot checking determined 
+that these are unlikely to be correct, so those records were dropped.
+
+There is a FRACTION field that is probably meant to be used for the fractional
+and letter additions to the street number, but it also contains a few trash items
+like period, square bracket, and slash. Sometimes it matches the extra stuff that
+appeared in the number field, but not always.
+
+The directional PREFIX field is pretty good, a few entries in lower case, so those 
+can be easily corrected, and one entry of "C", which is simply set to blank.
+
+### Street Names
+
+Now it gets much more interesting. How do we find mistakes in the street names?
+
+Look at low occurrence names. 
+
+- names that occur only once
+  - update names that are < 1060 ft from a 1 char change in 3 names in the zip
+  - then 2 character changes < 300 feet with >= 5 names in zip
+  - then 3 character changes < 300 feet with >= 9 names in zip
+- names that occur twice
+  - update names that are < 500 ft from a 1 char change in 8 names in the zip
+
+Because we will look for nearby names that are just one character different
+from our names that occur only once or twice, we also will have to exclude
+a few names that this would not work for.
+
+- Names of three letters or less
+- Names like "A STREET" or "B STREET"
+- Names like "14TH", "15TH", etc.
+- County Roads (CR 234, CR 235, etc.)
+
+Also corrected a number of special cases, ST changed to SAINT, SQ changed to
+SQUARE to enforce some sort of consistency. In total, 1,719 street names were 
+changed. Many of those were cases where the road type was repeated in the street 
+name, e.g., BLACK FALCON RD instead of BLACK FALCON with a type of RD.
+
+### Street types
+
+Compared street types to the standard USPS list, plus the Houston specific
+SPWY designation used only for Buffalo Speedway, and corrected them. 
+
+For street types of blank, looked at other streets with the same name in the zip 
+code and if there were more than 9 addresses, replaced the blank with the 
+appropriate type, if there was only one choice. I ignored types of CT, CIR, and PL
+since those were likely to get it wrong.
+
+Changed 109 street type fields to blank, and changed from blank to a street type
+for 2,122 records.
+
+### Street Prefix
+
+For directional prefixes, a similar strategy. 24 prefixes were set to blank,
+and 714 blank prefixes were updated to something else.
+
+### Coordinates
+
+All the records have what appear to be well-behaved lat/long values. There are also
+X-Y coordinates, with some of those being bogus. There are 201 obviously bad Y
+coordinates. The bad Y coordinates were replaced by reprojecting the Lat-Longs.
+
+### Zip Codes
+
+Checked the zip codes against the 2019 zip code polygon file. Looked at the data
+at the same address and looked for duplicate addresses that had unreasonably
+large distances between them.
+
+Fourteen records mismatched so badly that they were deleted. Mostly from 77040
+curiously enough.
+
+Corrected the zip code for 34 records.
+
+### Prefix redux
+
+Went back and looked at streets where within a zip, there were 5 times as many 
+records with a prefix as there were with blank prefix. For each blank prefix, if 
+there were 5 or more non-blank prefixes within 300 feet, then update it. There 
+were 577 of those updates. Then looked at 10 or more neighbors within 500 feet,
+and that caught another 111 records.
+
+### Manual corrections
+
+Finally there were a few manual corrections applied. Prominent among these was
+Martin Luther King Jr, which was mostly lacking the Jr.
+
+### Final processing
+
+To simplify things a bit, I decided that housing complexes of various sorts
+that have the same street address (maybe only distinguished by unit numbers)
+will be combined to a single address location. So as the final step, all
+records with identical addresses had their locations averaged. These I call
+my geocoding locations. And then, finally, I converted that dataframe into
+a data table which will allow much faster searches to be made later on.
+
+### Summary
+
+In total, there were 6,423 corrections of various sorts made, which out of 
+1.5 million records is amazingly small. This is a very clean dataset. Now I
+did take a pretty conservative approach, I know that there are still errors
+that I did not correct, probably another 6,000 or so, but that is still pretty 
+good. Good enough, in my estimation.
+
+
+

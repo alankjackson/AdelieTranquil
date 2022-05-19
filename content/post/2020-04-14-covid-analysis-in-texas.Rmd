@@ -1,0 +1,1142 @@
+---
+title: Covid Analysis in Texas
+author: Alan Jackson
+date: '2020-04-14'
+slug: covid-analysis-in-texas
+categories:
+  - Mortality
+tags:
+  - Houston
+  - Texas
+  - Covid-19
+keywords:
+  - tech
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(leaflet)
+library(leafpop) # for popup on map
+library(ggplot2)
+library(stringr)
+library(lubridate)
+library(rsample)
+library(broom)
+library(purrr)
+library(ggridges)
+library(viridis)
+library(readxl)
+library(gt)
+
+#   Directory where data is stored
+
+DataLocation <- "https://www.ajackson.org/Covid/"
+DataArchive <- "https://www.ajackson.org/SharedData/"
+
+#   Tibble database
+
+#   Case data
+z <- gzcon(url(paste0(DataLocation, "Covid.rds")))
+DF <- readRDS(z)
+close(z)
+#   Testing data
+z <- gzcon(url(paste0(DataLocation, "Testing.rds")))
+TestingData <- readRDS(z)
+close(z)
+TestingData$Total <- as.numeric(TestingData$Total)
+#   Death data
+z <- gzcon(url(paste0(DataLocation, "Deaths.rds")))
+DeathData <- readRDS(z)
+close(z)
+
+#   County polygons
+Texas <- readRDS(gzcon(url(paste0(DataArchive, "Texas_County_Outlines_lowres.rds"))))
+
+
+init_zoom <- 6
+MapCenter <- c(-99.9018, 31.9686) # center of state
+
+global_slope <- 0.13
+# https://dartthrowingchimp.shinyapps.io/covid19-app/
+
+# Clean up footnotes
+
+DF$County <- str_replace(DF$County, "\\d", "")
+
+# drop rows with zero or NA cases
+
+DF <- DF %>% filter(Cases>0, !is.na(Cases))
+
+# Add Statewide Totals per day
+
+DF <- DF %>% select(-LastUpdate) %>% bind_rows(
+                  DF %>%
+                  group_by(Date) %>% 
+                  summarise(Cases = sum(Cases), Deaths=sum(Deaths)) %>% 
+                  mutate(County="Total")
+                 ) %>% 
+    arrange(Date)
+
+# Calc days since March 10
+
+DF <- DF %>% 
+    mutate(Days=as.integer(Date-ymd("2020-03-10")))
+
+DeathData <- DeathData %>% 
+    mutate(Days=as.integer(Date-ymd("2020-03-10")))
+
+# Fix Deaths field
+
+DF$Deaths <- str_replace(DF$Deaths,"-", "na")
+
+DF <- DF %>% 
+  mutate(Deaths=as.numeric(Deaths)) %>% 
+  mutate(Deaths=na_if(Deaths, 0))
+
+
+# Add dummy Estimate field
+
+#DF <- DF %>% 
+#    mutate(Estimate=Cases)
+
+
+#   Last date in dataset formatted for plotting
+
+sf <- stamp_date("Sunday, Jan 17, 1999")
+lastdate <- sf(DF$Date[nrow(DF)])
+
+LastDate <- DF[nrow(DF),]$Date
+
+
+# Load population of counties into tibble
+Counties <- tribble(
+    ~County, ~Population,
+    "Harris", 4602523, "Dallas", 2586552, "Tarrant", 2019977,
+    "Bexar", 1925865, "Travis", 1203166, "Collin", 944350, "Hidalgo", 849389,
+    "El Paso", 837654, "Denton", 807047, "Fort Bend", 739342,
+    "Montgomery", 554445, "Williamson", 527057, "Cameron", 421750,
+    "Nueces", 360486, "Brazoria", 353999, "Bell", 342236,
+    "Galveston", 327089, "Lubbock", 301454, "Webb", 272053,
+    "Jefferson", 255210, "McLennan", 248429, "Smith", 225015,
+    "Brazos", 219193, "Hays", 204150, "Ellis", 168838,
+    "Midland", 164194, "Johnson", 163475, "Ector", 158342,
+    "Guadalupe", 155137, "Taylor", 136348, "Comal", 135097,
+    "Randall", 132475, "Wichita", 131818, "Parker", 129802,
+    "Grayson", 128560, "Gregg", 123494, "Potter", 120899,
+    "Kaufman", 118910, "Tom Green", 117466, "Bowie", 93858,
+    "Rockwall", 93642, "Hunt", 92152, "Victoria", 91970,
+    "Angelina", 87607, "Orange", 84047, "Bastrop", 82577,
+    "Liberty", 81862, "Henderson", 80460, "Coryell", 75389,
+    "Walker", 71539, "San Patricio", 67046, "Harrison", 66645,
+    "Nacogdoches", 65558, "Wise", 64639, "Starr", 63894,
+    "Maverick", 57970, "Anderson", 57863, "Hood", 56901,
+    "Hardin", 56379, "Van Zandt", 54368, "Rusk", 53595,
+    "Cherokee", 51903, "Kerr", 51365, "Waller", 49987,
+    "Lamar", 49532, "Medina", 49334, "Val Verde", 49027,
+    "Atascosa", 48828, "Navarro", 48583, "Wilson", 48198,
+    "Polk", 47837, "Burnet", 45750, "Wood", 43815,
+    "Kendall", 41982, "Wharton", 41551, "Erath", 41482,
+    "Caldwell", 41401, "Jim Wells", 41192, "Upshur", 40769,
+    "Chambers", 40292, "Cooke", 39571, "Brown", 37834,
+    "Matagorda", 36743, "Howard", 36667, "Hopkins", 36240,
+    "Jasper", 35504, "Hill", 35399, "Washington", 34796,
+    "Fannin", 34175, "Hale", 34113, "Titus", 32730,
+    "Bee", 32691, "Kleberg", 31425, "Cass", 30087,
+    "Austin", 29565, "Palo Pinto", 28317, "San Jacinto", 27819,
+    "Grimes", 27630, "Uvalde", 27009, "Gillespie", 26208,
+    "Shelby", 25478, "Fayette", 25066, "Aransas", 24763,
+    "Milam", 24664, "Limestone", 23515, "Panola", 23440,
+    "Hockley", 23162, "Houston", 22955, "Gray", 22685,
+    "Calhoun", 21807, "Moore", 21801, "Bandera", 21763,
+    "Willacy", 21754, "Hutchinson", 21571, "Tyler", 21496,
+    "Colorado", 21022, "Gonzales", 20667, "Lampasas", 23399,
+    "Llano", 20640,
+    "De Witt", 20435, "Gaines", 20321, "Lavaca", 19941,
+    "Jones", 19891, "Freestone", 19709, "Montague", 19409,
+    "Frio", 19394, "Deaf Smith", 18899, "Eastland", 18270,
+    "Bosque", 18122, "Young", 18114, "Burleson", 17863,
+    "Andrews", 17818, "Falls", 17299, "Scurry", 17239,
+    "Leon", 17098, "Lee", 16952, "Robertson", 16890,
+    "Pecos", 15797, "Karnes", 15387, "Reeves", 15125,
+    "Nolan", 14966, "Jackson", 14820, "Trinity", 14569,
+    "Zapata", 14369, "Madison", 14128, "Newton", 14057,
+    "Callahan", 13770, "Comanche", 13495, "Lamb", 13262,
+    "Dawson", 12964, "Wilbarger", 12906, "Camp", 12813,
+    "Terry", 12615, "Morris", 12424, "Red River", 12275,
+    "Zavala", 12131, "Live Oak", 12123, "Ward", 11586,
+    "Rains", 11473, "Duval", 11355, "Blanco", 11279,
+    "Franklin", 10679, "Dimmit", 10663, "Sabine", 10458,
+    "Clay", 10387, "Ochiltree", 10348, "Runnels", 10310,
+    "Marion", 10083, "Parmer", 9852, "Stephens", 9372,
+    "Brewster", 9216, "Jack", 8842, "Archer", 8789,
+    "Somervell", 8743, "Yoakum", 8571, "Mitchell", 8558,
+    "Coleman", 8391, "San Augustine", 8327, "Hamilton", 8269,
+    "McCulloch", 8098, "Winkler", 7802, "Castro", 7787,
+    "Goliad", 7531, "Swisher", 7484, "La Salle", 7409,
+    "Dallam", 7243, "Refugio", 7236, "Childress", 7226,
+    "Brooks", 7180, "Presidio", 7123, "Bailey", 7092,
+    "Garza", 6288, "Carson", 6032, "San Saba", 5962,
+    "Floyd", 5872, "Crosby", 5861, "Haskell", 5809,
+    "Lynn", 5808, "Hartley", 5767, "Martin", 5614,
+    "Hansford", 5547, "Wheeler", 5482, "Jim Hogg", 5282,
+    "Delta", 5215, "Mills", 4902, "Crane", 4839,
+    "Kimble", 4408, "Concho", 4233, "Mason", 4161,
+    "Hudspeth", 4098, "Hemphill", 4061, "Hardeman", 3952,
+    "Fisher", 3883, "Sutton", 3865, "Reagan", 3752,
+    "Knox", 3733, "Kinney", 3675, "Upton", 3634,
+    "Crockett", 3633, "Baylor", 3591, "Lipscomb", 3469,
+    "Real", 3389, "Donley", 3387, "Shackelford", 3311,
+    "Coke", 3275, "Hall", 3074, "Schleicher", 3061,
+    "Sherman", 3058, "Collingsworth", 2996, "Cochran", 2904,
+    "Culberson", 2241, "Jeff Davis", 2234, "Dickens", 2216,
+    "Menard", 2123, "Oldham", 2090, "Edwards", 2055,
+    "Armstrong", 1916, "Cottle", 1623, "Throckmorton", 1567,
+    "Briscoe", 1546, "Irion", 1524, "Glasscock", 1430,
+    "Foard", 1408, "Stonewall", 1385, "Motley", 1156,
+    "Sterling", 1141, "Roberts", 885, "Terrell", 862,
+    "Kent", 749, "Borden", 665, "McMullen", 662,
+    "Kenedy", 595, "King", 228, "Loving", 102
+)
+
+#   Sort counties with 20 largest first, then alphabetical
+
+ByPop <- arrange(Counties, -Population)
+ByAlpha <- arrange(ByPop[21:nrow(ByPop),], County)
+Counties <- bind_rows(ByPop[1:20,], ByAlpha)
+ByPop <- ByAlpha <- NULL
+
+Regions <- tribble(
+            ~Region, ~Population, ~Label,
+            "Texas", 27864555, "Texas",
+            "Houston-Galv", 6779104, "Houston/Galveston Metro Region",
+            "Dallas-Fort Worth", 4938225, "Dallas/Fort Worth Metro Region",
+            "San Antonio", 2426204, "San Antonio Metro Region",
+            "Austin", 2058351, "Austin Metro Region")
+
+DefineRegions <- tribble(
+    ~Region, ~List,
+    "Texas", c("Total"),
+    "Houston-Galv", c("Harris", "Fort Bend", "Galveston", "Waller", "Montgomery", "Liberty", "Brazoria", "Chambers", "Austin"),
+    "Dallas-Fort Worth", c("Collin", "Dallas", "Denton", "Ellis", "Hood", "Hunt", "Johnson", "Kaufman", "Parker", "Rockwall", "Somervell", "Tarrant", "Wise"),
+    "San Antonio", c("Atascosa", "Bandera", "Bexar", "Comal", "Guadalupe", "Kendall", "Medina", "Wilson"), 
+    "Austin", c("Bastrop", "Caldwell", "Hays", "Travis", "Williamson")
+)
+
+Stay_home <- tribble(
+~County, ~Stay_home_Date, 
+"Texas", "03-31-2020", "Harris", "03-24-2020",  "Dallas", "03-22-2020",
+"Travis", "03-24-2020", "Tarrant", "03-24-2020", "Collin",  "03-31-2020",
+"El Paso", "03-24-2020", "Angelina", "03-30-2020", "Bastrop", "03-31-2020",
+"Bell", "03-23-2020", "Bexar", "03-23-2020", "Brazoria", "03-26-2020",
+"Brazos", "03-23-2020", "Burnet", "03-25-2020", "Caldwell", "03-30-2020",
+"Cameron", "03-25-2020", "Cass", "04-2-2020", "Castro", "03-24-2020",
+"Chambers", "03-24-2020", "Cleburne", "03-27-2020", "Coryell", "04-08-2020",
+"Denton", "03-25-2020", "Ellis", "03-25-2020", "Fort Bend", "03-24-2020",
+"Galveston", "03-24-2020", "Gregg", "03-26-2020", "Hardin", "03-27-2020",
+"Harrison", "03-31-2020", "Hays", "03-26-2020", "Hidalgo", "03-25-2020",
+"Hunt", "03-23-2020", "Jasper", "03-28-2020", "Jefferson", "03-27-2020",
+"Johnson", "03-27-2020", "Kaufman", "03-25-2020", "Liberty", "03-24-2020",
+"Llano", "03-30-2020", "McLennan", "03-23-2020", "Montgomery", "03-27-2020",
+"Nacagdoches", "03-30-2020", "Newton", "03-30-2020", "Nueces", "03-26-2020",
+"Orange", "03-27-2020", "Polk", "03-25-2020", "Potter", "03-30-2020",
+"Robertson", "03-25-2020", "Rockwall", "03-24-2020", "Sabine", "03-30-2020",
+"San Augustine", "03-30-2020", "San Jacinto", "03-24-2020", "Scurry", "03-27-2020",
+"Smith", "03-27-2020", "Starr", "03-25-2020", "Trinity", "03-31-2020",
+"Tyler", "03-28-2020", "Willacy", "03-26-2020", "Williamson", "03-24-2020",
+"Young", "03-31-2020"
+)
+
+Stay_home$Stay_home_Date <- mdy(Stay_home$Stay_home_Date)
+
+
+# https://docs.google.com/document/d/1ETeXAfYOvArfLvlxExE0_xrO5M4ITC0_Am38CRusCko/edit#
+Disease <- tibble::tribble(
+              ~Demographics, "% Hosp", "% Hosp ICU", "% CFR",
+                      "12%", "0-9", "0.1%", "5.0%", "0.002%",
+                      "13%", "10-19", "0.3%", "5.0%", "0.006%",
+                      "14%", "20-29", "1.2%", "5.0%", "0.03%",
+                      "13%", "30-39", "3.2%", "5.0%", "0.08%",
+                      "12%", "40-49", "4.9%", "6.3%", "0.15%",
+                      "13%", "50-59", "10.2%", "12.2%", "0.60%",
+                      "11%", "60-69", "16.6%", "27.4%", "2.20%",
+                       "7%", "70-79", "24.3%", "43.2%", "5.10%",
+                       "4%", "80+", "27.3%", "70.9%", "9.30%"
+                            )
+
+partisan <- tribble(
+~ County, ~ Trump, ~ Clinton,
+"Harris", 545955, 707914, "Dallas", 262945, 461080, "Tarrant", 345921, 288392,
+"Bexar", 240333, 319550, "Travis", 127209, 308260, "Collin", 201014, 140624,
+"Denton", 170603, 110890, "Fort Bend", 117291, 134686, "El Paso", 55512, 147843,
+"Montgomery", 150314, 45835, "Williamson", 104175, 84468, "Hidalgo", 48642, 118809,
+"Galveston", 73757, 43658, "Brazoria", 72791, 43200, "Nueces", 50766, 49198,
+"Lubbock", 65651, 28023, "Bell", 51998, 37801, "Cameron", 29472, 59402,
+"Jefferson", 42862, 42443, "Smith", 58930, 22300, "McLennan", 48260, 27063,
+"Hays", 33826, 33224, "Brazos", 38738, 23121, "Ellis", 44941, 16253,
+"Comal", 45136, 14238, "Guadalupe", 36632, 18391, "Johnson", 44382, 10988,
+"Webb", 12947, 42307, "Parker", 46473, 8344, "Randall", 43462, 8367,
+"Midland", 36973, 10025, "Grayson", 35325, 10301, "Taylor", 33250, 10085,
+"Gregg", 28764, 11677, "Kaufman", 29587, 10278, "Rockwall", 28451, 9655,
+"Tom Green", 27494, 9173, "Wichita", 27631, 8770, "Ector", 25020, 10249,
+"Bowie", 24924, 8838, "Orange", 25513, 5735, "Hunt", 23910, 6396,
+"Victoria", 21275, 8866, "Henderson", 23650, 5669, "Angelina", 21668, 7538,
+"Potter", 19630, 7657, "Bastrop", 16328, 10569, "Harrison", 18749, 7151,
+"Hood", 21382, 4008, "Wise", 20670, 3412, "Liberty", 18892, 4862,
+"Kerr", 17727, 4681, "Hardin", 19606, 2780, "Nacogdoches", 14771, 6846,
+"Van Zandt", 18473, 2799, "San Patricio", 13030, 7871, "Kendall", 15700, 3643,
+"Polk", 15176, 4187, "Walker", 12884, 6091, "Wilson", 13998, 4790,
+"Burnet", 14638, 3797, "Rusk", 14675, 3935, "Wood", 15700, 2630,
+"Lamar", 14561, 3583, "Coryell", 12225, 5064, "Medina", 12085, 4634,
+"Anderson", 13201, 3369, "Cherokee", 12919, 3469, "Chambers", 13339, 2948,
+"Waller", 10531, 5748, "Navarro", 11994, 4002, "Upshur", 13209, 2380,
+"Cooke", 13181, 2352, "Washington", 10945, 3382, "Wharton", 10149, 4238,
+"Brown", 12017, 1621, "Erath", 11210, 2160, "Atascosa", 8618, 4651,
+"Val Verde", 5890, 6964, "Maverick", 2816, 10397, "Hopkins", 10707, 2510,
+"Jasper", 10609, 2590, "Gillespie", 10446, 2288, "Hill", 10108, 2547,
+"Jim Wells", 5420, 6694, "Cass", 9726, 2391, "Austin", 9637, 2320,
+"Matagorda", 8366, 3500, "Caldwell", 6691, 4795, "Fannin", 9548, 2132,
+"Starr", 2224, 9289, "Fayette", 8743, 2144, "Aransas", 7740, 2465,
+"Llano", 8299, 1825, "Panola", 8445, 1835, "San Jacinto", 8059, 2038,
+"Palo Pinto", 8284, 1708, "Bandera", 8163, 1726, "Grimes", 7065, 2194,
+"Kleberg", 4367, 4716, "Titus", 6511, 2597, "Shelby", 7179, 1758,
+"Uvalde", 4835, 3867, "Hale", 6366, 2101, "Howard", 6637, 1770,
+"Milam", 6364, 2051, "La Vaca", 7347, 1170, "Montague", 7526, 885,
+"Colorado", 6325, 1987, "Bee", 4744, 3444, "Houston", 6205, 1978,
+"Lampasas", 6385, 1483, "Hutchinson", 7042, 854, "Tyler", 6624, 1248,
+"Bosque", 6339, 1278, "Limestone", 5796, 1778, "Young", 6601, 876,
+"Freestone", 6026, 1471, "Leon", 6391, 909, "Gray", 6500, 701,
+"Hockley", 5809, 1260, "Robertson", 4668, 2203, "Calhoun", 4638, 2118,
+"Eastland", 6011, 776, "Burleson", 5316, 1491, "De Witt", 5519, 1163,
+"Lee", 4997, 1372, "Gonzales", 4587, 1571, "Trinity", 4737, 1154,
+"Jones", 4819, 936, "Blanco", 4212, 1244, "Callahan", 4865, 569,
+"Newton", 4288, 1156, "Jackson", 4266, 904, "Scurry", 4410, 733,
+"Moore", 3977, 1098, "Falls", 3441, 1684, "Comanche", 4333, 789,
+"Red River", 3926, 1149, "Willacy", 1547, 3422, "Clay", 4377, 536,
+"Morris", 3446, 1425, "Andrews", 3927, 836, "Nolan", 3552, 1029,
+"Rains", 3968, 628, "Sabine", 3998, 614, "Gaines", 3907, 597,
+"Camp", 3201, 1260, "Frio", 1856, 2444, "Franklin", 3585, 665,
+"Live Oak", 3464, 742, "Madison", 3351, 881, "Archer", 3786, 394,
+"Brewster", 2077, 1873, "Marion", 2983, 1165, "Deaf Smith", 2911, 1185,
+"Karnes", 2965, 1145, "Pecos", 2468, 1554, "Duval", 1316, 2783,
+"Wilbarger", 3166, 809, "Lamb", 3111, 771, "Somervell", 3206, 541,
+"Runnels", 3250, 453, "Goliad", 2620, 973, "Coleman", 3177, 388,
+"Hamilton", 3060, 479, "San Augustine", 2622, 910, "Dawson", 2636, 835,
+"Stephens", 3034, 348, "Ward", 2547, 783, "Zavala", 694, 2636,
+"Terry", 2459, 753, "Jack", 2973, 314, "Dimmit", 974, 2173,
+"Reeves", 1417, 1659, "Zapata", 1029, 2063, "McCulloch", 2552, 482,
+"Ochiltree", 2628, 274, "Carson", 2620, 249, "Refugio", 1830, 1034,
+"Brooks", 613, 1937, "Parmer", 1915, 485, "San Saba", 2025, 293,
+"Wheeler", 2087, 194, "Yoakum", 1797, 426, "Delta", 1836, 400,
+"Mills", 1951, 243, "Presidio", 652, 1458, "Swisher", 1671, 462,
+"Mitchell", 1780, 354, "Jim Hogg", 430, 1635, "Childress", 1802, 253,
+"La Salle", 872, 1129, "Mason", 1656, 354, "Lynn", 1546, 403,
+"Castro", 1414, 526, "Floyd", 1474, 435, "Hartley", 1730, 173,
+"Kimble", 1697, 206, "Hansford", 1730, 171, "Winkler", 1403, 420,
+"Bailey", 1344, 397, "Haskell", 1403, 314, "Martin", 1455, 266,
+"Fisher", 1265, 403, "Crosby", 1181, 468, "Hemphill", 1462, 181,
+"Real", 1382, 262, "Dallam", 1261, 222, "Hardeman", 1207, 249,
+"Shackelford", 1378, 103, "Baylor", 1267, 191, "Garza", 1225, 230,
+"Donley", 1225, 191, "Kinney", 936, 458, "Coke", 1265, 140,
+"Sutton", 1075, 313, "Crockett", 980, 372, "Crane", 1049, 299,
+"Knox", 1078, 247, "Upton", 1007, 286, "Lipscomb", 1159, 135,
+"Jeff Davis", 695, 422, "Collingsworth", 983, 145, "Hall", 893, 164,
+"Edwards", 746, 303, "Concho", 885, 148, "Schleicher", 821, 208,
+"Armstrong", 924, 70, "Oldham", 850, 78, "Sherman", 807, 96,
+"Dickens", 755, 128, "Reagan", 709, 167, "Cochran", 679, 190,
+"Hudspeth", 503, 324, "Menard", 682, 154, "Throckmorton", 715, 84,
+"Culberson", 280, 454, "Irion", 660, 90, "Briscoe", 625, 91,
+"Stonewall", 555, 135, "Sterling", 549, 70, "Motley", 566, 40,
+"Cottle", 506, 92, "Glasscock", 553, 34, "Roberts", 524, 20,
+"Foard", 383, 113, "McMullen", 454, 40, "Terrell", 288, 140,
+"Kent", 360, 59, "Borden", 330, 31, "Kenedy", 84, 99,
+"King", 149, 5, "Loving", 58, 4)
+
+
+# prep mapping polygons
+
+TodayData <- DF %>% filter(Date==LastDate) %>% 
+  filter(County!="Pending County Assignment") %>% 
+  left_join(., Counties, by="County") %>% 
+  mutate(percapita=Cases/Population*100000)
+
+MappingData <-  merge(Texas, TodayData,
+                      by.x = c("County"), by.y = c("County"),
+                      all.x = TRUE) 
+
+# Build labels for map
+
+MappingData <- MappingData %>%
+  mutate(percapita=signif(percapita,3)) %>% 
+  mutate(Deaths=na_if(Deaths, 0)) %>% 
+  mutate(DPerC=na_if(signif(Deaths/Cases,2),0))
+
+MapLabels <- lapply(seq(nrow(MappingData)), function(i) {
+  htmltools::HTML(
+    str_replace_all(
+      paste0( MappingData[i,]$County, ' County<br>', 
+              MappingData[i,]$Cases,' Cases Total<br>', 
+              MappingData[i,]$percapita, " per 100,000<br>",
+              MappingData[i,]$Deaths, " Deaths<br>",
+              MappingData[i,]$DPerC, " Deaths per Case"),
+      "NA", "Zero"))
+})
+
+span <- function(vector){
+  foo <- range(vector, na.rm=TRUE)
+  return(max(foo) - min(foo))
+}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+
+```{r nagelkerke, echo=FALSE}
+
+# @title Pseudo r-squared measures for various models
+#
+# @description Produces McFadden, Cox and Snell, and Nagelkerke pseudo 
+#              R-squared measures, along with p-values, for models.
+# 
+# @param fit The fitted model object for which to determine pseudo r-squared.
+# @param null The null model object against which to compare the fitted model 
+#             object. The null model must be nested in the fitted model to be 
+#             valid. Specifying the null
+#             is optional for some model object types
+#             and is required for others.
+# @param restrictNobs If \code{TRUE}, limits the observations for the null
+#                     model to those used in the fitted model.
+#                     Works with only some model object types.
+# @details  Pseudo R-squared values are not directly comparable to the  
+#           R-squared for OLS models.  Nor can they be interpreted as the  
+#           proportion of the variability in the dependent variable that is  
+#           explained by model. Instead pseudo R-squared measures are relative
+#           measures among similar models indicating how well the model
+#           explains the data.
+#           
+#           Cox and Snell is also referred to as ML. Nagelkerke is also  
+#           referred to as Cragg and Uhler.
+#           
+#           Model objects accepted are lm, glm, gls, lme, lmer, lmerTest, nls,
+#           clm, clmm, vglm, glmer, negbin, zeroinfl, betareg, and rq.            
+#                                       
+#           Model objects that require the null model to 
+#           be defined are nls, lmer, glmer, and clmm. 
+#           Other objects use the \code{update} function to
+#           define the null model.
+#           
+#           Likelihoods are found using ML (\code{REML = FALSE}).
+#           
+#           The fitted model and the null model
+#           should be properly nested.
+#           That is, the terms of one need to be a subset of the the other,
+#           and they should have the same set of observations.
+#           One issue arises when there are \code{NA}
+#           values in one variable but not another, and observations with 
+#           \code{NA} are removed in the model fitting.  The result may be
+#           fitted and null models with
+#           different sets of observations.
+#           Setting \code{restrictNobs} to \code{TRUE} 
+#           ensures that only observations in
+#           the fit model are used in the null model.
+#           This appears to work for \code{lm} and some \code{glm} models,
+#           but causes the function to fail for other model
+#           object types.
+#           
+#           Some pseudo R-squared measures may not be appropriate
+#           or useful for some model types.
+#           
+#           Calculations are based on log likelihood values for models.
+#           Results may be different than those based on deviance.
+#           
+# @author Salvatore Mangiafico, \email{mangiafico@njaes.rutgers.edu}
+# @references \url{http://rcompanion.org/handbook/G_10.html}
+# @seealso \code{\link{accuracy}}
+# @concept pseudo r-squared cox snell nagelkerke likelihood
+# @return A list of six objects describing the models used, the pseudo 
+#         r-squared values, the likelihood ratio test for the model,
+#         the number of obervaton for the models,
+#         messages, and any warnings.
+#
+# @section Acknowledgements:
+#          My thanks to
+#          Jan-Herman Kuiper of Keele University for suggesting
+#          the \code{restrictNobs} fix.
+#          
+# @examples
+# ### Logistic regression example
+# data(AndersonBias)
+# model = glm(Result ~ County + Sex + County:Sex,
+#            weight = Count,
+#            data = AndersonBias,
+#            family = binomial(link="logit"))
+# nagelkerke(model)
+# 
+# ### Quadratic plateau example 
+# ### With nls, the  null needs to be defined
+# data(BrendonSmall)
+# quadplat = function(x, a, b, clx) {
+#           ifelse(x  < clx, a + b * x   + (-0.5*b/clx) * x   * x,
+#                            a + b * clx + (-0.5*b/clx) * clx * clx)}
+# model = nls(Sodium ~ quadplat(Calories, a, b, clx),
+#             data = BrendonSmall,
+#             start = list(a   = 519,
+#                          b   = 0.359,
+#                          clx = 2304))
+# nullfunct = function(x, m){m}
+# null.model = nls(Sodium ~ nullfunct(Calories, m),
+#              data = BrendonSmall,
+#              start = list(m   = 1346))
+# nagelkerke(model, null=null.model)
+# 
+# @importFrom stats df.residual logLik nobs pchisq update nls
+# 
+# @export
+
+nagelkerke = 
+function(fit, null=NULL, restrictNobs=FALSE)
+{
+   TOGGLE =   (class(fit)[1]=="lm"
+             | class(fit)[1]=="gls"
+             | class(fit)[1]=="lme"
+             | class(fit)[1]=="glm"
+             | class(fit)[1]=="negbin"
+             | class(fit)[1]=="zeroinfl"
+             | class(fit)[1]=="clm"
+             | class(fit)[1]=="vglm"
+             | class(fit)[1]=="betareg"
+             | class(fit)[1]=="rq")
+   BOGGLE =   (class(fit)[1]=="nls"
+             | class(fit)[1]=="lmerMod"
+             | class(fit)[1]=="glmerMod"
+             | class(fit)[1]=="merModLmerTest"
+             | class(fit)[1]=="lmerModLmerTest"
+             | class(fit)[1]=="clmm")
+   SMOGGLE =   (class(fit)[1]=="lmerMod"
+              | class(fit)[1]=="glmerMod"
+              | class(fit)[1]=="merModLmerTest"
+              | class(fit)[1]=="lmerModLmerTest"
+              | class(fit)[1]=="vglm")
+   ZOGGLE  = (class(fit)[1]=="zeroinfl")
+   ZOGGLE2 = (class(fit)[1]=="rq")
+   NOGGLE = is.null(null)
+   ERROR  = "Note: For models fit with REML, these statistics are based on refitting with ML"
+   ERROR2 = "None"
+   
+  if(!restrictNobs & NOGGLE  & TOGGLE){null = update(fit, ~ 1)}
+  if(restrictNobs  & NOGGLE  & TOGGLE){null = update(fit, ~ 1, data=fit$model)}
+   
+  if(restrictNobs  & !NOGGLE){null = update(null, data=fit$model)}
+    
+  if(NOGGLE & BOGGLE)
+     {ERROR = "You need to supply a null model for nls, lmer, glmer, or clmm"}
+  if((!TOGGLE) & (!BOGGLE))
+   {ERROR = "This function will work with lm, gls, lme, lmer, glmer, glm, negbin, zeroinfl, nls, clm, clmm, and vglm"}
+  
+   SMOGGLE2 = (class(null)[1]=="lmerMod"
+              | class(null)[1]=="glmerMod"
+              | class(null)[1]=="merModLmerTest"
+              | class(null)[1]=="lmerModLmerTest"
+              | class(null)[1]=="vglm")   
+   
+  Y = matrix(rep(NA,2),
+            ncol=1)
+  colnames(Y) = ""
+  rownames(Y) = c("Model:", "Null:")
+  
+  Z = matrix(rep(NA, 3),
+             ncol=1)
+  colnames(Z) = c("Pseudo.R.squared")
+  rownames(Z) = c("McFadden", "Cox and Snell (ML)", 
+                  "Nagelkerke (Cragg and Uhler)")
+  
+  X = matrix(rep(NA,4),
+             ncol=4)
+  colnames(X) = c("Df.diff","LogLik.diff","Chisq","p.value")
+  rownames(X) = ""
+  
+  U = matrix(rep(NA,2),
+            ncol=1)
+  colnames(U) = ""
+  rownames(U) = c("Model:", "Null:")
+  
+  if(TOGGLE | BOGGLE){
+  if (!SMOGGLE){Y[1]= toString(fit$call)}
+  if (SMOGGLE){Y[1]= toString(fit@call)}
+  }
+ 
+  if(TOGGLE | (BOGGLE & !NOGGLE)){
+ 
+  if (!SMOGGLE2){Y[2]= toString(null$call)}
+  if (SMOGGLE2){Y[2]= toString(null@call)}
+ 
+  if(!ZOGGLE & !ZOGGLE2){N = nobs(fit)
+                         U[1,1]= nobs(fit); U[2,1]= nobs(null)}
+  if(!ZOGGLE &  ZOGGLE2){N = length(fit$y)
+                         U[1,1]= length(fit$y); U[2,1]= length(null$y)}
+  if(ZOGGLE){N = fit$n
+             U[1,1]= fit$n; U[2,1]= null$n}
+
+  if(U[1,1] != U[2,1]){
+    ERROR2 = "WARNING: Fitted and null models have different numbers of observations"}
+  
+  m = suppressWarnings(logLik(fit, REML=FALSE))[1]
+  n = suppressWarnings(logLik(null, REML=FALSE))[1]
+  mf = 1 - m/n
+  Z[1,] = signif(mf, digits=6)
+  cs = 1 - exp(-2/N * (m - n))
+  Z[2,] = signif(cs, digits=6)
+  nk = cs/(1 - exp(2/N * n))
+  Z[3,] = signif(nk, digits=6)
+  
+  o = n - m
+  dfm = attr(logLik(fit),"df")
+  dfn = attr(logLik(null),"df")
+  if(class(fit)[1]=="vglm"){dfm=df.residual(fit)}
+  if(class(fit)[1]=="vglm"){dfn=df.residual(null)}
+  dff = dfn - dfm
+  CHI = 2 * (m - n)
+  P = pchisq(CHI, abs(dff), lower.tail = FALSE)
+  
+  X [1,1] = dff
+  X [1,2] = signif(o, digits=5)             
+  X [1,3] = signif(CHI, digits=5)
+  X [1,4] = signif(P, digits=5)     
+  }
+  
+  W=ERROR
+  
+  WW=ERROR2
+  
+  V = list(Y, Z, X, U, W, WW) 
+  names(V) = c("Models", "Pseudo.R.squared.for.model.vs.null", 
+               "Likelihood.ratio.test", "Number.of.observations",
+               "Messages", "Warnings")
+  return(V)            
+}
+```
+
+
+
+```{r logistic , echo=FALSE}
+  #---------------------------------------------------    
+  #------------------- Fit Logistic function ---------
+  #---------------------------------------------------    
+  fit_logistic <- function(df,
+                           r=0.24,
+                           projection=10){
+    
+    Asym <- max(df$Cases)*5
+    xmid <- max(df$Days)*2
+    scal <- 1/r
+    my_formula <- as.formula(paste0("Cases", " ~ SSlogis(Days, Asym, xmid, scal)"))
+    
+    print("----1----")
+    
+    ## using a selfStart model
+      
+      logistic_model <- NULL
+      try(logistic_model <- nls(Cases ~ SSlogis(Days, Asym, xmid, scal), 
+                                data=df)); # does not stop in the case of error
+      
+      if(is.null(logistic_model)) {
+         case_params <- list(K=NA, 
+                              r=NA, 
+                              xmid=NA,
+                              xmid_se=NA)
+        return(case_params)
+      }
+      my_model <<- logistic_model
+      print(df$County[1])
+      print(summary(my_model))
+#    print("----2----")
+#    print(logistic_model)
+    coeffs <- coef(logistic_model)
+    xmid_sigma <- 2*summary(logistic_model)$parameters[2,2] # 2 sigma
+    Asym_sigma <- 2*summary(logistic_model)$parameters[1,2] # 2 sigma
+    scal_sigma <- 2*summary(logistic_model)$parameters[2,2] # 2 sigma
+    sigma <- summary(logistic_model)[["sigma"]]
+#    print("----3----")
+    #print(coeffs)
+    
+#    dayseq <- df$Days
+#    dayseq <- c(dayseq,(dayseq[length(dayseq)]+1):
+#                       (dayseq[length(dayseq)]+projection))
+#    dateseq <- df$Date
+#    dateseq <- as_date(c(dateseq,(dateseq[length(dateseq)]+1): 
+#                                 (dateseq[length(dateseq)]+projection)))
+    
+#    Cases <- predict(logistic_model, data.frame(Days=dayseq))
+#    foo <- tibble(Date=dateseq, Days=dayseq, Cases=Cases )
+    
+    ###############   tidy bootstrap start
+    
+    # Make 100 datasets for bootstrap
+#    boots <- bootstraps(df, times = 100)
+#    
+#    fit_nls_on_bootstrap <- function(split) {
+#      nls(my_formula, analysis(split))
+#    }
+#     f_safe <- purrr::safely(fit_nls_on_bootstrap)
+#    
+#    # Fit 100 models
+#    boot_models <- boots %>% 
+#      mutate(model = map(splits, f_safe)) %>% 
+#      mutate(no_error = model %>% purrr::map_lgl(.f = ~ is.null(.x$error))) %>% 
+#      filter(no_error) %>% 
+#      mutate(model = model %>% purrr::map("result")) %>% 
+#      mutate(coef_info = map(model, tidy))
+#    
+#    print("---------  boot models -----------")
+    
+#    pred2 <- function(model, foo){
+#      list(predict(model, foo)[0:nrow(foo)])
+#    }
+    
+    # Create predictions from each model and extract confidence
+    # limits at each day
+#    df2 <- boot_models %>% 
+#      rowwise() %>% 
+#      transmute(predicted = pred2(model, foo)) %>% 
+#      as_data_frame() %>%  transpose(.names="1":nrow(boot_models)) %>% 
+#      lapply(FUN = unlist) %>%
+#      as_tibble() %>% 
+#      as.matrix() %>% # convert to matrix for rapid quantile calc
+#      apply(., 1, quantile, c(0.025, 0.975)) %>% 
+#      as_tibble() %>% 
+#      rownames_to_column %>% # turn into 2 columns with many rows
+#      gather(var, value, -rowname) %>% 
+#      pivot_wider(names_from=rowname, values_from=value) %>% 
+#      select(lower_conf=2, upper_conf=3) %>% 
+#      tibble(foo, .)
+#    
+#    ###############   tidy bootstrap end
+    #Cases <- predict(logistic_model, foo)
+#    print(paste("Cases",length(Cases)))
+#    print(paste("dayseq",length(dayseq)))
+#    print(paste("dateseq",length(dateseq)))
+     #####   set global
+#     case_fit <<- tibble(Days=dayseq, 
+#                         Date=dateseq,
+#                        !!indep:=Cases,
+#                        lower_conf=df2$lower_conf,
+#                        upper_conf=df2$upper_conf)
+#     
+     case_params <- list( County=df$County[1],
+                          K=coeffs[["Asym"]], 
+                          r=1/coeffs[["scal"]], 
+                          xmid=coeffs[["xmid"]],
+                          xmid_se=xmid_sigma,
+                          Asym_sigma=Asym_sigma,
+                          scal_sigma=scal_sigma,
+                          sigma=sigma) 
+    return(case_params)
+  }
+```
+
+## Miscellaneous analyses related to the Covid-19 pandemic
+
+After reading the paper this morning about a county nearby (Houston county) with zero reported cases, I got curious. What does the distribution of test 
+coverage look like, i.e., number of tests per capita? And also, what is the rate of tests that come back positive?
+
+So let's look at the data.
+
+We can now grab an excel spreadsheet from the state that gives number
+of [tests per county](https://www.dshs.texas.gov/chs/data/COVID-19CumulativeTestTotalsbyCounty.xlsx). I know the population and number of positives, so let's go
+to work.
+
+```{r test coverage, warning=FALSE, include=FALSE, warning=FALSE, message=FALSE}
+path <- "/home/ajackson/Dropbox/Rprojects/Covid/TexasDataXcel/"
+
+files <- file.info(list.files(path = path, 
+                    pattern = "Tests_by_County_[0-9-]*.xlsx", 
+                    full.names = TRUE))
+newest_file <- rownames(files)[which.max(files$mtime)]
+
+df <- readxl::read_excel(newest_file, skip=1) %>% 
+  rename(Cum_Tests='Cumulative \r\nTotal Tests')
+#   Attach population and calculate coverage
+
+df <- left_join(df, Counties, by="County")
+
+df <- df %>% 
+  mutate(coverage=1.e5*Cum_Tests/Population) %>% 
+  filter(County != "TOTAL") %>% 
+  filter(County != "Pending Assignments") %>% 
+  arrange(Cum_Tests) %>% 
+  filter(!is.na(Cum_Tests))
+   
+ df %>% filter(coverage<800) %>% 
+   ggplot(aes(x=coverage)) +
+   geom_histogram()+
+   labs(x="Tests per 100,000 population",
+        y="Number of Counties",
+        title="Test Coverage per County")
+  
+ df %>% filter(coverage<800) %>% #filter(coverage>0) %>% 
+   ggplot(aes(x=coverage, y=Population)) +
+   geom_point() +
+   geom_smooth(method="lm") +
+   scale_y_log10()+
+   #coord_trans(y="log10") +
+   labs(x="Tests per 100,000 population",
+        y="Population",
+        title="Test Coverage per County")
+ 
+ df %>% arrange(-coverage) %>% head(10) 
+ 
+ #  Add in latest case and death counts
+ 
+ foo <- DF %>% 
+   replace_na(list(Cases=0, Deaths=0)) %>% 
+   group_by(County) %>% 
+   summarize(Cases=max(Cases), 
+             Deaths=max(Deaths))
+ df <- left_join(df, foo, by="County")
+  
+ df %>% filter(coverage<800) %>% #filter(coverage>0) %>% 
+   ggplot(aes(x=coverage, y=1.e5*Cases/Population)) +
+   geom_point() +
+   geom_smooth(method="lm") +
+   scale_x_log10()+
+   scale_y_log10()+
+   #coord_trans(y="log10") +
+   labs(x="Tests per 100,000 population",
+        y="Cases per 100,000",
+        title="Test Coverage per County")
+  
+ df %>% filter(coverage<800) %>% #filter(coverage>0) %>% 
+   ggplot(aes(x=coverage, y=1.e5*Deaths/Population)) +
+   geom_point() +
+   geom_smooth(method="lm") +
+   scale_y_log10()+
+   #coord_trans(y="log10") +
+   labs(x="Tests per 100,000 population",
+        y="Deaths per 100,000",
+        title="Test Coverage per County")
+  
+ df %>% filter(coverage<800) %>% #filter(coverage>0) %>% 
+   ggplot(aes(x=Cum_Tests, y=Cases)) +
+   geom_point() +
+   geom_smooth(method="lm") +
+   scale_y_log10()+
+   scale_x_log10()+
+   #coord_trans(y="log10") +
+   labs(x="Tests",
+        y="Cases",
+        title="Tests per County")
+ 
+ df %>% filter(coverage<800) %>% #filter(coverage>0) %>% 
+   ggplot(aes(x=coverage, y=Cases)) +
+   geom_point() +
+   geom_smooth(method="lm") +
+   scale_y_log10()+
+   scale_x_log10()+
+   #coord_trans(y="log10") +
+   labs(x="Test coverage per 100,000",
+        y="Cases",
+        title="Tests per County")
+ 
+ df %>% filter(coverage<800) %>% #filter(coverage>0) %>% 
+   mutate(positive_rate=Cases/Cum_Tests) %>% 
+   ggplot(aes(x=coverage, y=positive_rate)) +
+   geom_point() +
+   geom_smooth(method="lm") +
+   scale_y_log10()+
+   scale_x_log10()+
+   #coord_trans(y="log10") +
+   labs(x="Test coverage per 100,000",
+        y="Cases per Test",
+        title="Tests per County")
+```
+
+## Top test coverage counties - are the numbers real?
+
+The numbers for test coverage (tests per 100,000 population) for some counties seem too good to be true.
+
+So let's look into them
+
+Test numbers come from the [State Health Department](https://www.dshs.texas.gov/chs/data/COVID-19CumulativeTestTotalsbyCounty.xlsx)
+
+<p>
+
+
+
+```{r test coverage - 1, echo=FALSE, warning=FALSE, message=FALSE}
+
+
+ df %>% 
+  arrange(-coverage) %>% 
+  mutate(Coverage=signif(coverage,3)) %>% 
+  select(-coverage) %>% 
+  replace_na(list(Cases=0, Deaths=0)) %>% 
+  head(10) %>% 
+  gt() %>% 
+  tab_header(
+    title="Top Ten Texas Counties for Test Coverage"
+  )
+
+```
+
+That certainly raises some issues. 10% of the population tested, and no cases detected? These numbers are from April 13.
+
+For Shackelford county, if we look at the county website, there is a 
+[message](http://www.shackelfordcounty.org/upload/page/8560/2020/STreasurerC20041409260.pdf) about testing that states "as of April 13, 7 tests administered, 7 negative test results". Hmmm.... Seven is a far cry from 333.
+
+For Young county, the state has 267 tests, for about 1.5% coverage. The 
+health authority, Pat Martin, was appointed March 17, as the position 
+had been vacant since last year. On March 24 the county had 28 tests 
+and one positive, but half of those were results pending. On the 
+Graham Regional Medical Center Facebook page, it shows 335 tested, 
+324 negative, 6 positive, 25 pending as of 4/17. As far back as 4/9 
+they posted 284 tests. So some serious undercounting by the state. But
+good job by Young county. However, a death rate of 25% is worrisome.
+What is that about?
+
+Wichita county. Very nice [website](http://www.wichitafallstx.gov/2088/COVID-19),
+lots of current data. As of 4/17 they have 1717 tests, compared to the state
+1581, pretty close.
+
+Martin county. April 3 the county Facebook page shows 25 tests and zero cases.
+
+Victoria county. Health Department Facebook page shows 92 Cases on 4/17,
+and on their page, from the press conference, they said 1080 tests had
+been done.
+
+So really, with the exception of Shackelford, the numbers look okay. At
+least within reason.
+
+But what about another extreme? What if there are more cases detected
+than were tested for?
+<p>
+
+```{r test coverage - 2, echo=FALSE, warning=FALSE, message=FALSE}
+
+ df %>% 
+  filter(Cum_Tests>0) %>% 
+  mutate(positive_rate=Cases/Cum_Tests) %>% 
+  filter(positive_rate>0) %>% 
+  arrange(-positive_rate) %>% 
+  mutate(positive_rate=signif(positive_rate,3),
+         Coverage=signif(coverage,3)) %>% 
+  select(-coverage, -Deaths) %>% 
+  replace_na(list(Cases=0, Deaths=0)) %>% 
+  head(10) %>% 
+  gt() %>% 
+  tab_header(
+    title="Top Ten Texas Counties for Cases per Test"
+  )
+```
+
+Andrews County [Health Department website](http://www.co.andrews.tx.us/public_awareness/covid-19_update_andrews_county.php)
+as of April 17 shows 84 tested, 19 confirmed. The state only shows one test.
+
+Hockley county. As far as I can tell, no one has a clue as to how many 
+tests have been done. The county judge complained on Facebook that she
+doesn't even get told about positive results in a reliable way. It sounds
+like a hot mess.
+
+Sherman county. County website only links to state website. Facebook
+page for Sherman County Emergency Management has some info, but nothing
+on testing. He seems to pull everything off the state website - I get the
+impression he is not in the loop.
+
+Moore county. Worrisome story of county judge touting new antibody test. 
+I hope he understands that that test is only useful after the fact - after 
+it is clear you have it. April 15 report from [Amarillo TV station](
+https://abc7amarillo.com/news/local/17-new-covid-19-cases-reported-in-moore-county) shows 145 tests vs. 24 for the state numbers. The 
+[Moore county Hospital District](http://www.mchd.net/covid19.html) shows
+99 confirmed cases and 441 tests as of April 18.
+
+So for a fair number of counties, the state test counts are far too low,
+and for some it appears that no one has a clue as to how nmany test have 
+been run.
+
+## Hit rates for testing
+
+So ignoring all the obvious issues with some of the test numbers, let's look
+at another question. What fraction of people tested turn up positive? This
+number will likely fall with time, as testing criteria are loosened and more
+people are allowed to be tested, and should eventually stabilize somewhere near 
+the fraction who are symptomatic, or somewhat above, assuming that only symptomatic and exposed people get tested. 
+
+```{r fraction positive, echo=FALSE, warning=FALSE, message=FALSE}
+
+ df %>% filter(coverage<800) %>% #filter(coverage>0) %>% 
+   mutate(positive_rate=Cases/Cum_Tests) %>% 
+  filter(positive_rate<0.5) %>% 
+  ggplot(aes(x=positive_rate)) +
+    geom_histogram(binwidth=0.02, 
+                   fill="#69b3a2", 
+                   color="#e9ecef", 
+                   alpha=0.9) +
+   labs(x="Positive Cases per Test",
+        y="Number of Counties",
+        title="Positive Test Rate by County")
+```
+
+I don't believe the tail on this histogram. To me those represent serious
+undercounting of tests, as I think I demonstrated for a few extreme cases 
+above. What does seem believeable is that for symptomatic people getting
+a test, about 10% will turn up positive. I think that is a pretty good number.
+At least for places where the virus is relatively widespread.
+
+```{r coverage vs cases per test, echo=FALSE, warning=FALSE, message=FALSE}
+
+
+ 
+ df %>% filter(coverage<800) %>% #filter(coverage>0) %>% 
+   mutate(positive_rate=Cases/Cum_Tests) %>% 
+  filter(positive_rate<0.5) %>% 
+   ggplot(aes(x=coverage, y=positive_rate)) +
+   geom_point() +
+   geom_smooth(method="lm") +
+   scale_y_log10()+
+   scale_x_log10()+
+   #coord_trans(y="log10") +
+   labs(x="Test coverage per 100,000",
+        y="Cases per Test",
+        title="Tests per County")
+
+
+```
+
+In this cut at the data we see a definite correlation between the number
+of cases found per test, and how complete the testing coverage of a county is.
+My interpretation is that for most of the left side of the plot, it is
+simply reflecting testing underreporting. I think the right half is 
+probably closer to reality, and again we see that 10% positive is probably
+a useful rule of thumb.
+
+So, testing is still a mess, which is very worrisome since fast, accurate
+testing is crucial for relaxing the stay at home orders, but I think some 
+useful data can be gleaned.
+
+<!-- ## Let's look at stay-at-home orders -->
+
+```{r stay home, echo=FALSE, include=FALSE }
+
+cases_summary <- DF %>%   
+  filter(County != "Total") %>% 
+  filter(County != "Pending County Assignment") %>% 
+  filter(County != "TOTAL") %>% 
+  filter(County != "Pending Assignments") %>% 
+  arrange(Date) %>% 
+  group_by(County) %>% 
+  summarize(first_case=min(Date),
+  Days=n(), Deaths=max(Deaths, 0, na.rm=TRUE),
+  maxcases=max(Cases), mincases=min(Cases)) %>% 
+  ungroup()
+
+cases_summary <- left_join(cases_summary, Counties, by="County")
+
+cases_summary <- cases_summary %>% 
+  mutate(percapita=1.e5*maxcases/Population)
+
+cases_summary <- left_join(cases_summary, Stay_home, by="County")
+
+cases_summary <- cases_summary %>% 
+  replace_na(list(Stay_home_Date=mdy("03-31-2020")))
+
+#   fit logistic to each and grab asymptote and inflection
+
+foobar <- left_join(DF, cases_summary, by="County")
+foobar <- foobar %>% filter(maxcases>5) %>% 
+  rename(Days=Days.x)
+
+foobar <- foobar %>% 
+  filter(Cases>0) %>% 
+  filter(!is.na(Cases)) %>% 
+  group_by(County) %>% 
+  mutate(actual=Cases-lag(Cases, 1, 0)) %>% 
+  filter(actual>0) %>% 
+  mutate(Cases=cumsum(actual)) %>% 
+  ungroup()
+
+Fits.orig <- 
+foobar %>% #filter(County=="Brown"|County=="Dallas") %>% 
+group_by(County) %>% 
+  do(fit_logistic(df=.) %>% as_tibble) %>% 
+ungroup()
+
+Fits <- left_join(Fits.orig,cases_summary, by="County")
+
+Fits <- left_join(Fits,partisan, by="County")
+
+Fits <- Fits %>% mutate(redness=Trump/(Trump+Clinton))
+
+Fits <- Fits %>% 
+  mutate(pct_done=100*maxcases/K) %>% 
+  mutate(pain=1.e5*K/Population)
+
+
+ggplot(data=Fits, aes(y=pain, x=Days)) +
+   scale_y_log10()+
+   geom_smooth(method="lm") +
+  geom_point()
+
+ggplot(data=Fits, aes(y=pain, x=Population)) +
+   scale_y_log10()+
+   scale_x_log10()+
+   geom_smooth(method="lm") +
+  geom_point()
+
+Fits %>% 
+  filter(pain<200) %>% 
+ggplot(aes(x=pain)) +
+  geom_histogram()
+
+Fits %>% 
+  filter(pain<200) %>% 
+  filter(maxcases>50) %>% 
+ggplot(aes(y=pain, x=redness)) +
+   #scale_y_log10()+
+   #scale_x_log10()+
+   geom_smooth(method="lm") +
+  geom_point()
+
+
+Fits %>% 
+  mutate(caseload = case_when(
+             maxcases>50 ~ 1,
+             TRUE ~ 0
+  )) %>% 
+  group_by(County) %>% 
+    mutate(death_rate=Deaths/(maxcases)) %>% 
+  ungroup() %>% 
+  mutate(maxdr=max(death_rate)) %>% 
+  select(Deaths, maxcases, County, maxdr, death_rate, caseload) %>%   
+  filter(death_rate>0) %>% 
+  mutate(mid=as.factor(signif(as.integer(30*death_rate/maxdr)*maxdr/30,2))) %>% 
+  group_by(mid) %>% 
+    summarise(highcaseload=sum(caseload), fullcaseload=n()) %>% 
+  ungroup() %>% 
+  ggplot() +
+  geom_histogram(aes(x=mid, y=fullcaseload), fill="blue", stat="identity") +
+  geom_histogram(aes(x=mid, y=highcaseload), fill="deeppink", stat="identity") +
+  labs(y="Number of counties",
+       x="Death Rate",
+       title="Death Rate by County")
+    
+    
+Fits %>% 
+  mutate(death_rate=Deaths/(maxcases/30)) %>% 
+  filter(death_rate>0) %>% 
+  #filter(maxcases>50) %>% 
+ggplot(aes(x=death_rate)) +
+  geom_histogram() +
+  labs(x="Death Rate",
+       y="Number of Counties",
+       title="Death Rates for Texas Counties",
+       subtitle = "assume 5 doubling times to renorm case count")
+
+
+```
+
+
+
+
+
+
+ 

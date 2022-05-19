@@ -1,0 +1,31 @@
+---
+title: Houston Crime Statistics
+author: Alan Jackson
+date: '2019-01-21'
+slug: houston-crime-statistics
+categories: 
+  - Crime
+tags: 
+  - Crime
+  - Houston
+---
+
+##  Houston Crime Statistics
+
+A debate began on my neighborhood list. "Crime is increasing in the Heights!", 
+"Crime is not going up in the Heights!" and so on, back and forth. Then someone noted
+that all the crime data is on the Houston Police Department website, so someone could
+just download the data and answer the question. I thought to myself, "I could be that
+someone", so I started working on it. After a few months, I had a rather nice report 
+on crime in the neighnborhood, several Shiny apps to allow public perusal of the data,
+and I presented it all to a neighhood meeeting which included our local Constable. He
+and his staff were impressed and very supportive.
+
+Then I foolishly decided that I should do the same exercise for the entire city, after all,
+it is only about 10 times more data. Of course, by doing so, I discovered errors and bad 
+assumptions in the original work, and I am still working through those. It also became 
+obnoxiously labor intensive, so I want to try to eliminate some of the data cleanup labor.
+This should keep me busy for the rest of the year.
+
+My initial work, my prototype, is [crime in the Heights](http://www.ajackson.org/crime/index.html),
+including some [Shiny interative plots](https://ajackson.shinyapps.io/maps/).

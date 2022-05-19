@@ -1,0 +1,1016 @@
+---
+title: Covid-19 and Prisons
+author: Alan Jackson
+date: '2020-03-23'
+slug: covid-19-and-prisons
+categories:
+  - Mortality
+  - Prison  
+tags:
+  - Texas
+keywords:
+  - tech
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(gt)
+
+
+
+#   Directory where data is stored
+
+DataLocation <- "https://www.ajackson.org/Covid/"
+DataArchive <- "https://www.ajackson.org/SharedData/"
+
+#   Tibble database
+
+#   Case data
+z <- gzcon(url(paste0(DataLocation, "Covid.rds")))
+DF <- readRDS(z)
+close(z)
+#   Testing data
+z <- gzcon(url(paste0(DataLocation, "Testing.rds")))
+TestingData <- readRDS(z)
+close(z)
+TestingData$Total <- as.numeric(TestingData$Total)
+#   Death data
+z <- gzcon(url(paste0(DataLocation, "Deaths.rds")))
+DeathData <- readRDS(z)
+close(z)
+
+#   County polygons
+Texas <- readRDS(gzcon(url(paste0(DataArchive, "Texas_County_Outlines_lowres.rds"))))
+
+
+init_zoom <- 6
+MapCenter <- c(-99.9018, 31.9686) # center of state
+
+global_slope <- 0.13
+# https://dartthrowingchimp.shinyapps.io/covid19-app/
+
+# Clean up footnotes
+
+DF$County <- str_replace(DF$County, "\\d", "")
+
+# drop rows with zero or NA cases
+
+DF <- DF %>% filter(Cases>0, !is.na(Cases))
+
+# Add Statewide Totals per day
+
+DF <- DF %>% select(-LastUpdate) %>% bind_rows(
+                  DF %>%
+                  group_by(Date) %>% 
+                  summarise(Cases = sum(Cases), Deaths=sum(Deaths)) %>% 
+                  mutate(County="Total")
+                 ) %>% 
+    arrange(Date)
+
+# Calc days since March 10
+
+DF <- DF %>% 
+    mutate(Days=as.integer(Date-ymd("2020-03-10")))
+
+DeathData <- DeathData %>% 
+    mutate(Days=as.integer(Date-ymd("2020-03-10")))
+
+# Fix Deaths field
+
+DF$Deaths <- str_replace(DF$Deaths,"-", "na")
+
+DF <- DF %>% 
+  mutate(Deaths=as.numeric(Deaths)) %>% 
+  mutate(Deaths=na_if(Deaths, 0))
+
+
+# Add dummy Estimate field
+
+#DF <- DF %>% 
+#    mutate(Estimate=Cases)
+
+
+#   Last date in dataset formatted for plotting
+
+sf <- stamp_date("Sunday, Jan 17, 1999")
+lastdate <- sf(DF$Date[nrow(DF)])
+
+LastDate <- DF[nrow(DF),]$Date
+
+
+# Load population of counties into tibble
+Counties <- tribble(
+    ~County, ~Population,
+    "Harris", 4602523, "Dallas", 2586552, "Tarrant", 2019977,
+    "Bexar", 1925865, "Travis", 1203166, "Collin", 944350, "Hidalgo", 849389,
+    "El Paso", 837654, "Denton", 807047, "Fort Bend", 739342,
+    "Montgomery", 554445, "Williamson", 527057, "Cameron", 421750,
+    "Nueces", 360486, "Brazoria", 353999, "Bell", 342236,
+    "Galveston", 327089, "Lubbock", 301454, "Webb", 272053,
+    "Jefferson", 255210, "McLennan", 248429, "Smith", 225015,
+    "Brazos", 219193, "Hays", 204150, "Ellis", 168838,
+    "Midland", 164194, "Johnson", 163475, "Ector", 158342,
+    "Guadalupe", 155137, "Taylor", 136348, "Comal", 135097,
+    "Randall", 132475, "Wichita", 131818, "Parker", 129802,
+    "Grayson", 128560, "Gregg", 123494, "Potter", 120899,
+    "Kaufman", 118910, "Tom Green", 117466, "Bowie", 93858,
+    "Rockwall", 93642, "Hunt", 92152, "Victoria", 91970,
+    "Angelina", 87607, "Orange", 84047, "Bastrop", 82577,
+    "Liberty", 81862, "Henderson", 80460, "Coryell", 75389,
+    "Walker", 71539, "San Patricio", 67046, "Harrison", 66645,
+    "Nacogdoches", 65558, "Wise", 64639, "Starr", 63894,
+    "Maverick", 57970, "Anderson", 57863, "Hood", 56901,
+    "Hardin", 56379, "Van Zandt", 54368, "Rusk", 53595,
+    "Cherokee", 51903, "Kerr", 51365, "Waller", 49987,
+    "Lamar", 49532, "Medina", 49334, "Val Verde", 49027,
+    "Atascosa", 48828, "Navarro", 48583, "Wilson", 48198,
+    "Polk", 47837, "Burnet", 45750, "Wood", 43815,
+    "Kendall", 41982, "Wharton", 41551, "Erath", 41482,
+    "Caldwell", 41401, "Jim Wells", 41192, "Upshur", 40769,
+    "Chambers", 40292, "Cooke", 39571, "Brown", 37834,
+    "Matagorda", 36743, "Howard", 36667, "Hopkins", 36240,
+    "Jasper", 35504, "Hill", 35399, "Washington", 34796,
+    "Fannin", 34175, "Hale", 34113, "Titus", 32730,
+    "Bee", 32691, "Kleberg", 31425, "Cass", 30087,
+    "Austin", 29565, "Palo Pinto", 28317, "San Jacinto", 27819,
+    "Grimes", 27630, "Uvalde", 27009, "Gillespie", 26208,
+    "Shelby", 25478, "Fayette", 25066, "Aransas", 24763,
+    "Milam", 24664, "Limestone", 23515, "Panola", 23440,
+    "Hockley", 23162, "Houston", 22955, "Gray", 22685,
+    "Calhoun", 21807, "Moore", 21801, "Bandera", 21763,
+    "Willacy", 21754, "Hutchinson", 21571, "Tyler", 21496,
+    "Colorado", 21022, "Gonzales", 20667,  "Lampasas", 23399,
+    "Llano", 20640, 
+    "DeWitt", 20435, "Gaines", 20321, "Lavaca", 19941,
+    "Jones", 19891, "Freestone", 19709, "Montague", 19409,
+    "Frio", 19394, "Deaf Smith", 18899, "Eastland", 18270,
+    "Bosque", 18122, "Young", 18114, "Burleson", 17863,
+    "Andrews", 17818, "Falls", 17299, "Scurry", 17239,
+    "Leon", 17098, "Lee", 16952, "Robertson", 16890,
+    "Pecos", 15797, "Karnes", 15387, "Reeves", 15125,
+    "Nolan", 14966, "Jackson", 14820, "Trinity", 14569,
+    "Zapata", 14369, "Madison", 14128, "Newton", 14057,
+    "Callahan", 13770, "Comanche", 13495, "Lamb", 13262,
+    "Dawson", 12964, "Wilbarger", 12906, "Camp", 12813,
+    "Terry", 12615, "Morris", 12424, "Red River", 12275,
+    "Zavala", 12131, "Live Oak", 12123, "Ward", 11586,
+    "Rains", 11473, "Duval", 11355, "Blanco", 11279,
+    "Franklin", 10679, "Dimmit", 10663, "Sabine", 10458,
+    "Clay", 10387, "Ochiltree", 10348, "Runnels", 10310,
+    "Marion", 10083, "Parmer", 9852, "Stephens", 9372,
+    "Brewster", 9216, "Jack", 8842, "Archer", 8789,
+    "Somervell", 8743, "Yoakum", 8571, "Mitchell", 8558,
+    "Coleman", 8391, "San Augustine", 8327, "Hamilton", 8269,
+    "McCulloch", 8098, "Winkler", 7802, "Castro", 7787,
+    "Goliad", 7531, "Swisher", 7484, "La Salle", 7409,
+    "Dallam", 7243, "Refugio", 7236, "Childress", 7226,
+    "Brooks", 7180, "Presidio", 7123, "Bailey", 7092,
+    "Garza", 6288, "Carson", 6032, "San Saba", 5962,
+    "Floyd", 5872, "Crosby", 5861, "Haskell", 5809,
+    "Lynn", 5808, "Hartley", 5767, "Martin", 5614,
+    "Hansford", 5547, "Wheeler", 5482, "Jim Hogg", 5282,
+    "Delta", 5215, "Mills", 4902, "Crane", 4839,
+    "Kimble", 4408, "Concho", 4233, "Mason", 4161,
+    "Hudspeth", 4098, "Hemphill", 4061, "Hardeman", 3952,
+    "Fisher", 3883, "Sutton", 3865, "Reagan", 3752,
+    "Knox", 3733, "Kinney", 3675, "Upton", 3634,
+    "Crockett", 3633, "Baylor", 3591, "Lipscomb", 3469,
+    "Real", 3389, "Donley", 3387, "Shackelford", 3311,
+    "Coke", 3275, "Hall", 3074, "Schleicher", 3061,
+    "Sherman", 3058, "Collingsworth", 2996, "Cochran", 2904,
+    "Culberson", 2241, "Jeff Davis", 2234, "Dickens", 2216,
+    "Menard", 2123, "Oldham", 2090, "Edwards", 2055,
+    "Armstrong", 1916, "Cottle", 1623, "Throckmorton", 1567,
+    "Briscoe", 1546, "Irion", 1524, "Glasscock", 1430,
+    "Foard", 1408, "Stonewall", 1385, "Motley", 1156,
+    "Sterling", 1141, "Roberts", 885, "Terrell", 862,
+    "Kent", 749, "Borden", 665, "McMullen", 662,
+    "Kenedy", 595, "King", 228, "Loving", 102
+)
+
+#   Sort counties with 20 largest first, then alphabetical
+
+ByPop <- arrange(Counties, -Population)
+ByAlpha <- arrange(ByPop[21:nrow(ByPop),], County)
+Counties <- bind_rows(ByPop[1:20,], ByAlpha)
+ByPop <- ByAlpha <- NULL
+
+Regions <- tribble(
+            ~Region, ~Population, ~Label,
+            "Texas", 27864555, "Texas",
+            "Houston-Galv", 6779104, "Houston/Galveston Metro Region",
+            "Dallas-Fort Worth", 4938225, "Dallas/Fort Worth Metro Region",
+            "San Antonio", 2426204, "San Antonio Metro Region",
+            "Austin", 2058351, "Austin Metro Region",
+            "Lubbock", 290805, "Lubbock Metro Region",
+            "Amarillo", 249881, "Amarillo Metro Region")
+
+DefineRegions <- tribble(
+    ~Region, ~List,
+    "Texas", c("Total"),
+    "Houston-Galv", c("Harris", "Fort Bend", "Galveston", "Waller", "Montgomery", "Liberty", "Brazoria", "Chambers", "Austin"),
+    "Dallas-Fort Worth", c("Collin", "Dallas", "Denton", "Ellis", "Hood", "Hunt", "Johnson", "Kaufman", "Parker", "Rockwall", "Somervell", "Tarrant", "Wise"),
+    "San Antonio", c("Atascosa", "Bandera", "Bexar", "Comal", "Guadalupe", "Kendall", "Medina", "Wilson"), 
+    "Austin", c("Bastrop", "Caldwell", "Hays", "Travis", "Williamson"),
+    "Lubbock", c("Crosby", "Lubbock", "Lynn"),
+    "Amarillo", c("Armstrong", "Carson", "Potter", "Randall", "Oldham")
+)
+
+# https://docs.google.com/document/d/1ETeXAfYOvArfLvlxExE0_xrO5M4ITC0_Am38CRusCko/edit#
+Disease <- tibble::tribble(
+              ~Demographics, "% Hosp", "% Hosp ICU", "% CFR",
+                      "12%", "0-9", "0.1%", "5.0%", "0.002%",
+                      "13%", "10-19", "0.3%", "5.0%", "0.006%",
+                      "14%", "20-29", "1.2%", "5.0%", "0.03%",
+                      "13%", "30-39", "3.2%", "5.0%", "0.08%",
+                      "12%", "40-49", "4.9%", "6.3%", "0.15%",
+                      "13%", "50-59", "10.2%", "12.2%", "0.60%",
+                      "11%", "60-69", "16.6%", "27.4%", "2.20%",
+                       "7%", "70-79", "24.3%", "43.2%", "5.10%",
+                       "4%", "80+", "27.3%", "70.9%", "9.30%"
+                            )
+
+# prep mapping polygons
+
+TodayData <- DF %>% filter(Date==LastDate) %>% 
+  filter(County!="Pending County Assignment") %>% 
+  left_join(., Counties, by="County") %>% 
+  mutate(percapita=Cases/Population*100000)
+
+# Calc doubling and slope for last 5 days
+GetSlope <- function(x, y){
+  if(length(y)<5) {return(NA)}
+  if(y[5]<5) {return(NA)}
+  model <- lm(log10(y)~x )
+  model[["coefficients"]][["x"]]
+}
+GetRsqr <- function(x, y){
+  if(length(y)<5) {return(NA)}
+  if(y[5]<5) {return(NA)}
+  model <- lm(log10(y)~x )
+  #model[["coefficients"]][["x"]]
+  summary(model)$adj.r.squared
+}
+GetDouble <- function(x, y){
+  if(length(y)<5) {return(NA)}
+  if(y[5]<5) {return(NA)}
+  model <- lm(log10(y)~x )
+  m <- model[["coefficients"]][["x"]]
+  if (m<.0001) {return(NA)}
+  signif(log10(2)/m,2) # doubling time
+}
+GetPercent <- function(x, y){
+  if(length(y)<5) {return(NA)}
+  if(y[5]<5) {return(NA)}
+  m <- (100*(y-lag(y))/lag(y))
+  m <- mean(m, na.rm = TRUE)
+  signif(m,2) # average percent change
+}
+
+Slopes <- DF %>% 
+  filter(County!="Pending County Assignment") %>% 
+  group_by(County) %>% 
+  slice(tail(row_number(), 5)) %>% 
+  mutate(m=GetSlope(Days, Cases)) %>% 
+  mutate(double=GetDouble(Days, Cases)) %>% 
+  mutate(avgpct=GetPercent(Days, Cases)) %>% 
+  mutate(Rsqr=GetRsqr(Days, Cases)) %>% 
+  slice(1) %>% 
+  ungroup %>% 
+  select(County, m, Rsqr, double, avgpct)
+
+# Add current cases to county for labeling selector
+
+Counties <- left_join(Counties, TodayData, by="County") %>% 
+  select(County, Population=Population.x, Cases) %>% 
+  replace_na(list(Cases=0))
+
+MappingData <-  merge(Texas, TodayData,
+                      by.x = c("County"), by.y = c("County"),
+                      all.x = TRUE) 
+
+MappingData <- left_join(MappingData, Slopes, by="County")
+
+# Build labels for map
+
+
+MappingData <- MappingData %>%
+  mutate(m=signif(100000*m/Population,3)) %>% 
+  mutate(Rsqr=signif(Rsqr,3)) %>% 
+  mutate(percapita=signif(percapita,3)) %>% 
+  mutate(Deaths=na_if(Deaths, 0)) %>% 
+  mutate(DPerC=na_if(signif(Deaths/Cases,2),0)) %>% 
+  mutate(DPerCap=na_if(100000*signif(Deaths/Population,2),0))  
+
+# From https://www.people-press.org/2018/08/09/an-examination-of-the-2016-electorate-based-on-validated-voters/
+
+Votes <- tribble(
+  ~Category, ~Clinton, ~Trump, ~Electorate_Share,
+  "Total",   .48,       .46,     1.0,
+  "Men",     .41,       .52,     .45,
+  "Women",   .54,       .39,     .55,
+  "18-29",   .58,       .28,     .13,
+  "30-49",   .51,       .40,     .30,
+  "50-64",   .45,       .51,     .29,
+  "65+",     .44,       .53,     .27,
+  "White",   .39,       .54,     .74,
+  "Black",   .91,       .06,     .10,
+  "Hispanic",.66,       .28,     .10
+)
+
+# https://www.statista.com/statistics/241572/death-rate-by-age-and-sex-in-the-us/
+DeathRate <- tribble(
+  ~Age,       ~Male,  ~Female,
+    "1-4",	   27.3,	   21.1,
+    "5-9",	   12.5,	   10.6,
+  "10-14",	   18.6,	   12.3,
+  "15-19",	   72.7,	   29.4,
+  "20-24",	  137.9,	   50.9,
+  "25-29",	  171.3,	   68.8,
+  "30-34",	  196.3,	   93.5,
+  "35-39",	  227.1,	  120.5,
+  "40-44",	  273.6,	  163.9,
+  "45-49",	  387.3,	  240.6,
+  "50-54",	  604.4,	  375.5,
+  "55-59",	  919.5,	  563.4,
+  "60-64",	 1328.3,	  795.4,
+  "65-69",	 1831.8,	 1154.5,
+  "70-74",	   2668,	 1809.5,
+  "75-79",	 4193.7,	 2973.6,
+  "80-84", 	 6901.6,	 5123.9,
+  "85+",  	14689.2,	12966.5
+)
+
+LifeTable2016 <- tibble::tribble(
+   ~Age, ~MaleDeathProb, ~MNumLives, ~MLifeExp, ~FemalDeathProb, ~VFNumL, ~FLifeExp,
+    0L, 0.006364,   1e+05, 76.04, 0.005331,   1e+05, 80.99,
+    1L, 0.000432,   99364, 75.52, 0.000359,   99467, 80.43,
+    2L, 0.000284,   99321, 74.55, 0.000247,   99431, 79.46,
+    3L, 0.000234,   99292, 73.58, 0.000169,   99407, 78.48,
+    4L,  0.00017,   99269, 72.59, 0.000155,   99390, 77.49,
+    5L, 0.000157,   99252,  71.6, 0.000135,   99375,  76.5,
+    6L, 0.000147,   99237, 70.62,  0.00012,   99361, 75.51,
+    7L, 0.000136,   99222, 69.63, 0.000109,   99349, 74.52,
+    8L,  0.00012,   99209, 68.64,    1e-04,   99338, 73.53,
+    9L, 0.000101,   99197, 67.64,  9.4e-05,   99328, 72.54,
+   10L,  8.8e-05,   99187, 66.65,  9.3e-05,   99319, 71.54,
+   11L,  9.3e-05,   99178, 65.66,  9.8e-05,   99310, 70.55,
+   12L,  0.00013,   99169, 64.66, 0.000113,   99300, 69.56,
+   13L, 0.000209,   99156, 63.67,  0.00014,   99289, 68.56,
+   14L,  0.00032,   99135, 62.68, 0.000176,   99275, 67.57,
+   15L, 0.000441,   99103,  61.7, 0.000216,   99258, 66.58,
+   16L, 0.000564,   99060, 60.73, 0.000259,   99236,  65.6,
+   17L, 0.000701,   99004, 59.76, 0.000301,   99211, 64.62,
+   18L, 0.000851,   98934, 58.81, 0.000342,   99181, 63.63,
+   19L, 0.001007,   98850, 57.86, 0.000381,   99147, 62.66,
+   20L, 0.001173,   98751, 56.91, 0.000423,   99109, 61.68,
+   21L, 0.001331,   98635, 55.98, 0.000466,   99067, 60.71,
+   22L, 0.001455,   98504, 55.05, 0.000505,   99021, 59.73,
+   23L, 0.001531,   98360, 54.13, 0.000539,   98971, 58.76,
+   24L, 0.001572,   98210, 53.22, 0.000568,   98918,  57.8,
+   25L, 0.001602,   98055,  52.3, 0.000598,   98861, 56.83,
+   26L, 0.001635,   97898, 51.38,  0.00063,   98802, 55.86,
+   27L, 0.001669,   97738, 50.47, 0.000666,   98740,  54.9,
+   28L, 0.001708,   97575, 49.55, 0.000707,   98674, 53.93,
+   29L, 0.001752,   97408, 48.63, 0.000753,   98605, 52.97,
+   30L, 0.001794,   97238, 47.72, 0.000803,   98530, 52.01,
+   31L, 0.001835,   97063,  46.8, 0.000853,   98451, 51.05,
+   32L,  0.00188,   96885, 45.89, 0.000905,   98367, 50.09,
+   33L,  0.00193,   96703, 44.97, 0.000956,   98278, 49.14,
+   34L, 0.001986,   96516, 44.06, 0.001009,   98184, 48.19,
+   35L, 0.002052,   96325, 43.15, 0.001069,   98085, 47.23,
+   36L, 0.002125,   96127, 42.23, 0.001134,   97980, 46.28,
+   37L, 0.002196,   95923, 41.32, 0.001199,   97869, 45.34,
+   38L, 0.002264,   95712, 40.41, 0.001263,   97752, 44.39,
+   39L, 0.002334,   95495,  39.5, 0.001329,   97628, 43.45,
+   40L,  0.00242,   95272, 38.59, 0.001403,   97499,  42.5,
+   41L,  0.00253,   95042, 37.69, 0.001491,   97362, 41.56,
+   42L, 0.002663,   94801, 36.78, 0.001597,   97217, 40.62,
+   43L, 0.002823,   94549, 35.88, 0.001724,   97061, 39.69,
+   44L, 0.003013,   94282, 34.98, 0.001871,   96894, 38.76,
+   45L, 0.003229,   93998, 34.08, 0.002033,   96713, 37.83,
+   46L, 0.003479,   93694, 33.19, 0.002212,   96516,  36.9,
+   47L,  0.00378,   93369,  32.3, 0.002417,   96303, 35.98,
+   48L,  0.00414,   93016, 31.43, 0.002651,   96070, 35.07,
+   49L, 0.004553,   92631, 30.55, 0.002911,   95815, 34.16,
+   50L, 0.005007,   92209, 29.69, 0.003193,   95536, 33.26,
+   51L, 0.005493,   91747, 28.84, 0.003492,   95231, 32.36,
+   52L, 0.006016,   91243, 27.99, 0.003803,   94899, 31.48,
+   53L, 0.006575,   90694, 27.16, 0.004126,   94538, 30.59,
+   54L,  0.00717,   90098, 26.34, 0.004462,   94148, 29.72,
+   55L, 0.007805,   89452, 25.52, 0.004829,   93728, 28.85,
+   56L, 0.008477,   88754, 24.72,  0.00522,   93275, 27.99,
+   57L, 0.009181,   88001, 23.93, 0.005612,   92788, 27.13,
+   58L, 0.009916,   87193, 23.15,    0.006,   92267, 26.28,
+   59L, 0.010683,   86329, 22.37, 0.006397,   91714, 25.44,
+   60L, 0.011533,   85407, 21.61, 0.006848,   91127,  24.6,
+   61L, 0.012434,   84422, 20.85, 0.007358,   90503, 23.76,
+   62L, 0.013302,   83372, 20.11, 0.007893,   89837, 22.94,
+   63L, 0.014109,   82263, 19.37, 0.008453,   89128, 22.12,
+   64L, 0.014913,   81102, 18.65, 0.009063,   88375,  21.3,
+   65L, 0.015808,   79893, 17.92, 0.009761,   87574, 20.49,
+   66L, 0.016868,   78630,  17.2, 0.010581,   86719, 19.69,
+   67L, 0.018101,   77303, 16.49, 0.011535,   85801, 18.89,
+   68L, 0.019544,   75904, 15.78, 0.012646,   84811, 18.11,
+   69L, 0.021206,   74421, 15.09, 0.013919,   83739, 17.33,
+   70L, 0.023122,   72843,  14.4, 0.015413,   82573, 16.57,
+   71L, 0.025265,   71158, 13.73, 0.017089,   81301, 15.82,
+   72L, 0.027585,   69360, 13.07, 0.018861,   79911, 15.09,
+   73L,  0.03007,   67447, 12.43, 0.020705,   78404, 14.37,
+   74L, 0.032794,   65419,  11.8, 0.022703,   76781, 13.66,
+   75L, 0.035963,   63274, 11.18, 0.025035,   75038, 12.97,
+   76L, 0.039588,   60998, 10.58, 0.027766,   73159, 12.29,
+   77L, 0.043511,   58583,    10, 0.030822,   71128, 11.62,
+   78L,  0.04772,   56034,  9.43, 0.034227,   68936, 10.98,
+   79L, 0.052358,   53360,  8.88, 0.038062,   66576, 10.35,
+   80L, 0.057712,   50567,  8.34, 0.042539,   64042,  9.74,
+   81L, 0.063886,   47648,  7.82, 0.047663,   61318,  9.15,
+   82L, 0.070782,   44604,  7.32, 0.053278,   58395,  8.58,
+   83L, 0.078442,   41447,  6.84, 0.059378,   55284,  8.04,
+   84L, 0.086997,   38196,  6.38, 0.066132,   52001,  7.51,
+   85L, 0.096603,   34873,  5.94, 0.073763,   48562,  7.01,
+   86L,  0.10739,   31504,  5.52, 0.082465,   44980,  6.53,
+   87L, 0.119456,   28121,  5.12,  0.09237,   41271,  6.07,
+   88L, 0.132853,   24762,  4.75, 0.103546,   37459,  5.64,
+   89L, 0.147599,   21472,   4.4, 0.115997,   33580,  5.23,
+   90L, 0.163689,   18303,  4.08, 0.129706,   29685,  4.85,
+   91L, 0.181104,   15307,  3.78, 0.144636,   25835,   4.5,
+   92L,  0.19981,   12535,   3.5, 0.160741,   22098,  4.18,
+   93L, 0.219765,   10030,  3.25, 0.177971,   18546,  3.88,
+   94L, 0.240913,    7826,  3.03,  0.19627,   15245,  3.61,
+   95L, 0.261868,    5941,  2.83, 0.214769,   12253,  3.37,
+   96L, 0.282225,    4385,  2.66, 0.233174,    9622,  3.16,
+   97L, 0.301555,    3147,  2.51, 0.251158,    7378,  2.96,
+   98L, 0.319421,    2198,  2.37, 0.268378,    5525,  2.79,
+   99L, 0.335392,    1496,  2.25, 0.284481,    4042,  2.63,
+  100L, 0.352162,     994,  2.13,  0.30155,    2892,  2.48,
+  101L,  0.36977,     644,  2.02, 0.319643,    2020,  2.33,
+  102L, 0.388259,     406,  1.91, 0.338821,    1374,  2.19,
+  103L, 0.407672,     248,  1.81, 0.359151,     909,  2.06,
+  104L, 0.428055,     147,  1.71,   0.3807,     582,  1.93,
+  105L, 0.449458,      84,  1.61, 0.403542,     361,  1.81,
+  106L, 0.471931,      46,  1.52, 0.427754,     215,  1.69,
+  107L, 0.495527,      24,  1.43,  0.45342,     123,  1.58,
+  108L, 0.520304,      12,  1.35, 0.480625,      67,  1.47,
+  109L, 0.546319,       6,  1.27, 0.509462,      35,  1.37,
+  110L, 0.573635,       3,  1.19,  0.54003,      17,  1.27,
+  111L, 0.602317,       1,  1.11, 0.572432,       8,  1.18,
+  112L, 0.632432,       0,  1.04, 0.606778,       3,  1.09,
+  113L, 0.664054,       0,  0.97, 0.643184,       1,  1.01,
+  114L, 0.697257,       0,  0.91, 0.681775,       0,  0.93,
+  115L, 0.732119,       0,  0.84, 0.722682,       0,  0.86,
+  116L, 0.768725,       0,  0.78, 0.766043,       0,  0.79,
+  117L, 0.807162,       0,  0.73, 0.807162,       0,  0.73,
+  118L,  0.84752,       0,  0.67,  0.84752,       0,  0.67,
+  119L, 0.889896,       0,  0.62, 0.889896,       0,  0.62
+  )
+
+Prison_Pop <- tribble(~Unit_Name, ~Population, ~Company,
+"Allred", 3680, "Correctional Institutions Division",
+"Baten", 41, "Correctional Institutions Division",
+"Beto", 3358, "Correctional Institutions Division",
+"Boyd", 1319, "Correctional Institutions Division",
+"Bradshaw", 1784, "Corrections Corporation of America",
+"Bridgeport", 515, "Global Expertise in Outsourcing",
+"Briscoe", 1359, "Correctional Institutions Division",
+"Byrd", 1204, "Correctional Institutions Division",
+"Chase Field Wilderness Work Program", 414, "Correctional Institutions Division",
+"Clemens", 1097, "Correctional Institutions Division",
+"Clements", 3591, "Correctional Institutions Division",
+"Cleveland", 509, "Global Expertise in Outsourcing",
+"Coffield", 4100, "Correctional Institutions Division",
+"Cole", 771, "Correctional Institutions Division",
+"Connally", 2028, "Correctional Institutions Division",
+"Cotulla", 572, "Correctional Institutions Division",
+"Crain", 1430, "Correctional Institutions Division",
+"Dalhart", 1032, "Correctional Institutions Division",
+"Daniel", 970, "Correctional Institutions Division",
+"Darrington", 1730, "Correctional Institutions Division",
+"Diboll", 507, "Management and Training Corporation",
+"Dominguez", 2024, "Correctional Institutions Division",
+"Duncan", 428, "Correctional Institutions Division",
+"Eastham", 2392, "Correctional Institutions Division",
+"East Texas", 471, "Management and Training Corporation",
+"Ellis", 2143, "Correctional Institutions Division",
+"Estelle", 2833, "Correctional Institutions Division",
+"Estes", 1032, "Management and Training Corporation",
+"Ferguson", 2290, "Correctional Institutions Division",
+"Formby", 925, "Correctional Institutions Division",
+"Ft. Stockton", 567, "Correctional Institutions Division",
+"Garza East", 1744, "Correctional Institutions Division",
+"Garza West", 2147, "Correctional Institutions Division",
+"Gist", 1954, "Correctional Institutions Division",
+"Glossbrenner", 141, "Correctional Institutions Division",
+"Goodman", 341, "Correctional Institutions Division",
+"Goree", 889, "Correctional Institutions Division",
+"Gurney", 1953, "Correctional Institutions Division",
+"Halbert", 190, "Correctional Institutions Division",
+"Hamilton", 1057, "Correctional Institutions Division",
+"Havins", 566, "Correctional Institutions Division",
+"Henley", 157, "Correctional Institutions Division",
+"Hightower", 1317, "Correctional Institutions Division",
+"Hilltop", 448, "Correctional Institutions Division",
+"Hobby", 1349, "Correctional Institutions Division",
+"Hodge", 939, "Correctional Institutions Division",
+"Holliday", 2056, "Correctional Institutions Division",
+"Hospital Galveston", 169, "Correctional Institutions Division",
+"Hughes", 2936, "Correctional Institutions Division",
+"Huntsville", 1356, "Correctional Institutions Division",
+"Hutchins", 1939, "Correctional Institutions Division",
+"Jester III", 1040, "Correctional Institutions Division",
+"Jester IV", 468, "Correctional Institutions Division",
+"Jordan", 993, "Correctional Institutions Division",
+"Kyle", 264, "Management and Training Corporation",
+"LeBlanc", 1216, "Correctional Institutions Division",
+"Lewis", 2084, "Correctional Institutions Division",
+"Lindsey", 916, "Corrections Corporation of America",
+"Lockhart", 470, "Global Expertise in Outsourcing",
+"Lockhart Work Facility Work Program", 486, "Global Expertise in Outsourcing",
+"Lopez", 1002, "Correctional Institutions Division",
+"Luther", 1293, "Correctional Institutions Division",
+"Lychner", 1756, "Correctional Institutions Division",
+"Lynaugh", 1134, "Correctional Institutions Division",
+"Marlin", 544, "Correctional Institutions Division",
+"McConnell", 2812, "Correctional Institutions Division",
+"Michael", 2902, "Correctional Institutions Division",
+"Middleton", 1985, "Correctional Institutions Division",
+"Montford", 637, "Correctional Institutions Division",
+"Moore, B.", 494, "Management and Training Corporation",
+"Moore, C.", 1189, "Correctional Institutions Division",
+"Mountain View", 529, "Correctional Institutions Division",
+"Murray", 1272, "Correctional Institutions Division",
+"Neal", 1717, "Correctional Institutions Division",
+"Ney", 396, "Correctional Institutions Division",
+"Pack", 1281, "Correctional Institutions Division",
+"Plane", 1957, "Correctional Institutions Division",
+"Polunsky", 2956, "Correctional Institutions Division",
+"Powledge", 863, "Correctional Institutions Division",
+"Ramsey", 1703, "Correctional Institutions Division",
+"Roach", 1379, "Correctional Institutions Division",
+"Robertson", 2913, "Correctional Institutions Division",
+"Rudd", 136, "Correctional Institutions Division",
+"San Angelo Work Camp", 19, "Correctional Institutions Division",
+"Sanchez", 833, "Correctional Institutions Division",
+"San Saba", 554, "Correctional Institutions Division",
+"Santa Maria Baby Bonding", 9, "Correctional Institutions Division",
+"Sayle", 169, "Correctional Institutions Division",
+"Scott", 1024, "Correctional Institutions Division",
+"Segovia", 1148, "Correctional Institutions Division",
+"Skyview", 482, "Correctional Institutions Division",
+"Smith", 1559, "Correctional Institutions Division",
+"Stevenson", 1117, "Correctional Institutions Division",
+"Stiles", 2590, "Correctional Institutions Division",
+"Stringfellow", 1094, "Correctional Institutions Division",
+"Telford", 2778, "Correctional Institutions Division",
+"Terrell", 1558, "Correctional Institutions Division",
+"Torres", 1360, "Correctional Institutions Division",
+"Travis", 921, "Correctional Institutions Division",
+"Tulia", 584, "Correctional Institutions Division",
+"Vance", 329, "Correctional Institutions Division",
+"Wallace", 1121, "Correctional Institutions Division",
+"West Texas Hospital", 103, "Correctional Institutions Division",
+"Wheeler", 529, "Correctional Institutions Division",
+"Willacy", 1066, "Corrections Corporation of America",
+"Woodman", 647, "Correctional Institutions Division",
+"Wynne", 2591, "Correctional Institutions Division",
+"Young", 432, "Correctional Institutions Division"
+)
+
+
+
+Prison_location <- tribble(
+~Unit_Name,	~Unit_Code,	~Operator,	~Gender,	~Type,	~Region,	~City,	~County,
+"Allred",     "JA", "CID", "Male", "Prison", "V", "Iowa Park", "Wichita",
+"Baten",     NA, "CID", "Male", "Prison", NA, "Pampa", "Gray",
+"Bell",       "CV", "MTC", "Male", "Private Prison", "Private", "Cleveland", "Liberty",
+"Beto",       "B", "CID", "Male", "Prison", "II", "Tennessee Colony", "Anderson",
+"Boyd",       "BY", "CID", "Male", "Prison", "II", "Teague", "Freestone",
+"Bradshaw",   "BH", "MTC", "Male", "Private State Jail", "Private", "Henderson", "Rusk",
+"Bridgeport", "BR", "MTC", "Male", "Private Prison", "Private", "Bridgeport", "Wise",
+"Briscoe",    "DB", "CID", "Male", "Prison", "IV", "Dilley", "Frio",
+"Byrd",       "DU", "CID", "Male", "Prison", "I", "Huntsville", "Walker",
+"Clemens",    "CN", "CID", "Male", "Prison", "III", "Brazoria", "Brazoria",
+"Clements",   "BC", "CID", "Male", "Prison", "V", "Amarillo", "Potter",
+"Coffield",   "CO", "CID", "Male", "Prison", "II", "Tennessee Colony", "Anderson",
+"Cole",       "CL", "CID", "Male", "State Jail", "II", "Bonham", "Fannin",
+"Connally",   "CY", "CID", "Male", "Prison", "IV", "Kenedy", "Karnes",
+"Cotulla",    "N4", "CID", "Male", "Transfer Facility", "IV", "Cotulla", "La Salle",
+"Crain",      "GV", "CID", "Female", "Prison", "VI", "Gatesville", "Coryell",
+"Dalhart",    "DH", "CID", "Male", "Prison", "V", "Dalhart", "Hartley",
+"Daniel",     "DL", "CID", "Male", "Prison", "V", "Snyder", "Scurry",
+"Darrington", "DA", "CID", "Male", "Prison", "III", "Rosharon", "Brazoria",
+"Diboll",     "DO", "MTC", "Male", "Private Prison", "Private", "Diboll", "Angelina",
+"Dominguez",  "BX", "CID", "Male", "State Jail", "IV", "San Antonio", "Bexar",
+"Duncan",     "N6", "CID", "Male", "Geriatric Facility", "I", "Diboll", "Angelina",
+"East Texas", "XQ", "MTC", "Co-Gender", "Private Multi-Use", "Private", "Henderson", "Rusk",
+"Eastham",    "EA", "CID", "Male", "Prison", "I", "Lovelady", "Houston",
+"Ellis",      "E1", "CID", "Male", "Prison", "I", "Huntsville", "Walker",
+"Estelle",    "E2", "CID", "Male", "Prison", "I", "Huntsville", "Walker",
+"Estes",      "VS", "MTC", "Male", "Private Prison", "Private", "Venus", "Johnson",
+"Ferguson",   "FE", "CID", "Male", "Prison", "I", "Midway", "Madison",
+"Formby",     "FB", "CID", "Male", "State Jail", "V", "Plainview", "Hale",
+"Ft. Stockton", "N5", "CID", "Male", "Transfer Facility", "IV", "Fort Stockton", "Pecos",
+"Garza East", "NI", "CID", "Male", "Transfer Facility", "IV", "Beeville", "Bee",
+"Garza West", "NH", "CID", "Male", "Transfer Facility", "IV", "Beeville", "Bee",
+"Gist",       "BJ", "CID", "Male", "State Jail", "III", "Beaumont", "Jefferson",
+"Glossbrenner", "SO", "CID", "Male", "SAFPF", "IV", "San Diego", "Duvall",
+"Goodman",    "GG", "CID", "Male", "Transfer Facility", "I", "Jasper", "Jasper",
+"Goree",      "GR", "CID", "Male", "Prison", "I", "Huntsville", "Walker",
+"Gurney",     "ND", "CID", "Male", "Transfer Facility", "II", "Palestine", "Anderson",
+"Halbert",    "BB", "CID", "Female", "SAFPF", "VI", "Burnet", "Burnet",
+"Hamilton",   "JH", "CID", "Male", "Pre-Release", "VI", "Bryan", "Brazos",
+"Havins",     "TH", "CID", "Male", "Pre-Release", "VI", "Brownwood", "Brown",
+"Henley",     "LT", "CID", "Female", "State Jail", "III", "Dayton", "Liberty",
+"Hightower",  "HI", "CID", "Male", "Prison", "III", "Dayton", "Liberty",
+"Hilltop",    "HT", "CID", "Female", "Prison", "VI", "Gatesville", "Coryell",
+"Hobby",      "HB", "CID", "Female", "Prison", "VI", "Marlin", "Falls",
+"Hodge",      "HD", "CID", "Male", "DDP", "II", "Rusk", "Cherokee",
+"Holliday",   "NF", "CID", "Male", "Transfer Facility", "I", "Huntsville", "Walker",
+"Hospital Galveston", "HG", "CID", "Co-Gender", "Medical", "III", "Galveston", "Galveston",
+"Hughes",     "AH", "CID", "Male", "Prison", "VI", "Gatesville", "Coryell",
+"Huntsville", "HV", "CID", "Male", "Prison", "I", "Huntsville", "Walker",
+"Hutchins",   "HJ", "CID", "Male", "State Jail", "II", "Dallas", "Dallas",
+"Jester I",   "J1", "CID", "Male", "SAFPF", "III", "Richmond", "Fort Bend",
+"Jester III", "J3", "CID", "Male", "Prison", "III", "Richmond", "Fort Bend",
+"Jester IV",  "J4", "CID", "Male", "Psychiatric", "III", "Richmond", "Fort Bend",
+"Johnston",   "JT", "CID", "Male", "SAFPF", "II", "Winnsboro", "Wood",
+"Jordan",     "JN", "CID", "Male", "Prison", "V", "Pampa", "Gray",
+"Kegans",     NA, "CID", "Male", "Prison", "III", "Houston", "Harris",
+"Kyle",       "KY", "MTC", "Male", "Private Prison", "Private", "Kyle", "Hays",
+"LeBlanc", "BA", "CID", "Male", "Pre-Release", "III", "Beaumont", "Jefferson",
+"Lewis", "GL", "CID", "Male", "Prison", "I", "Woodville", "Tyler",
+"Lindsey", "LN", "MTC", "Male", "Private State Jail", "Private", "Jacksboro", "Jack",
+"Lockhart", "LC", "MTC", "Female", "Private Prison", "Private", "Lockhart", "Caldwell",
+"Lopez", "RL", "CID", "Male", "State Jail", "IV", "Edinburg", "Hidalgo",
+"Luther", "P2", "CID", "Male", "Prison", "VI", "Navasota", "Grimes",
+"Lychner", "AJ", "CID", "Male", "State Jail", "III", "Humble", "Harris",
+"Lynaugh", "LH", "CID", "Male", "Prison", "IV", "Fort Stockton", "Pecos",
+"Marlin", "N1", "CID", "Female", "Transfer Facility", "VI", "Marlin", "Falls",
+"McConnell", "ML", "CID", "Male", "Prison", "IV", "Beeville", "Bee",
+"Michael", "MI", "CID", "Male", "Prison", "II", "Tennessee Colony", "Anderson",
+"Middleton", "NE", "CID", "Male", "Transfer Facility", "VI", "Abilene", "Jones",
+"Montford", "JM", "CID", "Male", "Psychiatric", "V", "Lubbock", "Lubbock",
+"West Texas Hospital", "JM", "CID", "Male", "Psychiatric", "V", "Lubbock", "Lubbock",
+"Moore, B.", "BM", "MTC", "Male", "Private Prison", "Private", "Overton", "Rusk",
+"Moore, C.", "CM", "CID", "Male", "Transfer Facility", "II", "Bonham", "Fannin",
+"Mountain View", "MV", "CID", "Female", "Prison", "VI", "Gatesville", "Coryell",
+"Murray", "LM", "CID", "Female", "Prison", "VI", "Gatesville", "Coryell",
+"Neal", "KN", "CID", "Male", "Prison", "V", "Amarillo", "Potter",
+"Ney", "HF", "CID", "Male", "State Jail", "IV", "Hondo", "Medina",
+"Pack", "P1", "CID", "Male", "Prison", "VI", "Navasota", "Grimes",
+"Plane", "LJ", "CID", "Female", "State Jail", "III", "Dayton", "Liberty",
+"Santa Maria Baby Bonding", "LJ", "CID", "Female", "State Jail", "III", "Dayton", "Liberty",
+"Polunsky", "TL", "CID", "Male", "Prison", "I", "Livingston", "Polk",
+"Powledge", "B2", "CID", "Male", "Prison", "II", "Palestine", "Anderson",
+"Ramsey", "R1", "CID", "Male", "Prison", "III", "Rosharon", "Brazoria",
+"Roach", "RH", "CID", "Male", "Prison", "V", "Childress", "Childress",
+"Robertson", "RB", "CID", "Male", "Prison", "VI", "Abilene", "Jones",
+"Rudd", "RD", "CID", "Male", "Prison", "V", "Brownfield", "Terry",
+"San Saba", "N2", "CID", "Female", "Transfer Facility", "VI", "San Saba", "San Saba",
+"Sanchez", "RZ", "CID", "Male", "State Jail", "IV", "El Paso", "El Paso",
+"Sayle", "SY", "CID", "Male", "SAFPF", "VI", "Breckenridge", "Stephens",
+"Scott", "RV", "CID", "Male", "Prison", "III", "Angleton", "Brazoria",
+"Segovia", "EN", "CID", "Male", "Pre-Release", "IV", "Edinburg", "Hidalgo",
+"Skyview", "SV", "CID", "Co-Gender", "Psychiatric", "II", "Rusk", "Cherokee",
+"Smith", "SM", "CID", "Male", "Prison", "V", "Lamesa", "Dawson",
+"Stevenson", "SB", "CID", "Male", "Prison", "IV", "Cuero", "DeWitt",
+"Stiles", "ST", "CID", "Male", "Prison", "III", "Beaumont", "Jefferson",
+"Stringfellow", "R2", "CID", "Male", "Prison", "III", "Rosharon", "Brazoria",
+"Telford", "TO", "CID", "Male", "Prison", "II", "New Boston", "Bowie",
+"Terrell", "R3", "CID", "Male", "Prison", "III", "Rosharon", "Brazoria",
+"Torres", "TE", "CID", "Male", "Prison", "IV", "Hondo", "Medina",
+"Travis", "TI", "CID", "Male", "State Jail", "VI", "Austin", "Travis",
+"Tulia", "N3", "CID", "Male", "Transfer Facility", "V", "Tulia", "Swisher",
+"Vance", "J2", "CID", "Male", "Prison", "III", "Richmond", "Fort Bend",
+"Wallace", "WL", "CID", "Male", "Prison", "V", "Colorado City", "Mitchell",
+"San Angelo Work Camp", "WL", "CID", "Male", "Prison", "V", "Colorado City", "Mitchell",
+"West Texas RMF", NA, "CID", "Male", "Prison", "V", "Lubbock", "Lubbock",
+"Wheeler", "WR", "CID", "Male", "State Jail", "V", "Plainview", "Hale",
+"Willacy", "WI", "LaSalle", "Male", "Private State Jail", "Private", "Raymondville", "Willacy",
+"Woodman", "WM", "CID", "Female", "State Jail", "VI", "Gatesville", "Coryell",
+"Wynne", "WY", "CID", "Male", "Prison", "I", "Huntsville", "Walker",
+"Young", "GC", "CID", "Female", "Medical", "III", "Dickinson", "Galveston"
+)
+
+Prison_load <- left_join(Prison_location, Prison_Pop, by="Unit_Name")
+
+Prison_load <- Prison_load %>% 
+   group_by(County) %>% 
+   summarise(Population=sum(Population)) %>% 
+   ungroup
+
+Mortality <- readRDS("/home/ajackson/Dropbox/Rprojects/Datasets/Archive/Mortality_Age_State")
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Prisons and their effects on the surrounding community
+
+It is becoming clear that prisons, meat-packing plants, and nursing homes
+all resemble cruise ships in terms of providing a fertile environment
+for rapid spread of the virus. Unlike cruise ships, none of these are
+isolated from their surrounding communities - staff enter and leave
+on a daily basis, potentially spreading the virus nearby.
+
+There are a few counties that have "specialized" in hosting prisons, to the
+extent that a large fraction of the county population is inmates. There are
+about 25 counties for which the inmate population makes up greater than 5%
+of the county population - and up to almost 25% in one case.
+
+## Growth Rates
+
+We look at the last 5 days, and average the daily percent change in
+the number of cases. If there are no new cases, this number is zero. If 
+the number of cases is doubling every day, then this number is
+100%.
+
+First let's compare the overall distribution of recent growth rates and
+highlight counties with a prison population greater than 5% of the
+county population. 
+
+One important caveat. For reasons that I do not understand,  the state
+COVID-19 case counts do not include prison inmates. So the county case
+numbers are for non-incarcerated residents of those counties only.
+
+
+```{r histogram, echo=FALSE, warning=FALSE}
+foo <- left_join(MappingData, Prison_load, by="County") %>% 
+   select(County, Cases, Deaths, Days, Population=Population.x,
+          percapita, m, double, avgpct, inmates=Population.y, Rsqr) %>% 
+   mutate(inmate_pct=signif(100*inmates/Population,3),
+          Caseload=signif(100000*Cases/Population,3)) %>%  
+   #filter(!is.na(inmate_pct)) %>% 
+   select(County, inmate_pct, Caseload, avgpct, double, m, Rsqr) %>% 
+   mutate(growth_rate=signif(1/double,3)) %>% 
+   select(-double) %>% 
+   mutate(prison=ifelse(inmate_pct>5, 
+                        "Large Inmate Pop",
+                        "Small Inmate Pop")) %>% 
+   replace_na(list(prison="Small Inmate Pop")) %>% 
+   mutate(prison=factor(prison, levels=c("Small Inmate Pop", "Large Inmate Pop")))
+   
+foo %>% 
+  ggplot(aes(x=avgpct, fill=prison)) + 
+  geom_histogram(binwidth=1.0, color="black") +
+  labs(title="Growth Rates per county",
+       subtitle="Large Inmate Pop is greater than 5% of county",
+       x="Growth rate (percent increase per day)",
+       y="Number of Counties")
+```
+
+It appears that there is a a bias towards counties with large inmate
+populations (relative to the county population) having a higher growth rate
+in COVID cases.
+
+## Dose response plotting
+
+Let's separate out those counties with a large inmate population, and
+plot the size of the inmate population against the growth rate. If there
+is a relationship, then higher inmate population counties should show
+a higher growth rate.
+
+
+
+```{r crossplots, echo=FALSE, warning=FALSE, message=FALSE}
+
+foo %>% 
+   filter(!is.na(inmate_pct)) %>% 
+   ggplot(aes(x=avgpct, inmate_pct)) +
+   geom_point()+
+   geom_smooth(method="lm")+
+   geom_text(data=subset(foo, inmate_pct > 10),
+            aes(avgpct,inmate_pct,label=County),
+            vjust="bottom", hjust="right") +
+   labs(title="Recent Average % Increase in Cases vs. % Inmate Population",
+        x="Avg % Increase in Cases per Day",
+        y="Inmate percentage of county population")
+```
+
+This looks compelling, but what if it is being dominated by Jones county, 
+which is quite the outlier. Let's plot it again, eliminating Jones from
+consideration.
+
+```{r crossplots2, echo=FALSE, warning=FALSE, message=FALSE}
+
+foo %>% 
+   filter(!is.na(inmate_pct)) %>% 
+   filter(avgpct<40) %>% 
+   ggplot(aes(y=avgpct, x=inmate_pct)) +
+   geom_point()+
+   geom_smooth(method="lm")+
+   geom_text(data=subset(foo, (inmate_pct > 10) & (avgpct<40)),
+            aes(y=avgpct,x=inmate_pct,label=County),
+            vjust="bottom", hjust="right") +
+   labs(title="% Inmate Population vs. Recent Average % Increase in Cases",
+        subtitle="Jones county removed from consideration",
+        y="Avg % Increase in Cases per Day",
+        x="Inmate percentage of county population")
+
+foo %>% 
+  filter(!is.na(inmate_pct)) %>% 
+  filter(avgpct<40) %>%
+  mutate(y=avgpct, x=inmate_pct) %>% 
+  select(x,y) -> modeldata
+  
+model <- lm(y~x, data=modeldata )
+m <- model[["coefficients"]][["x"]]
+rsqr <- summary(model)$adj.r.squared 
+
+```
+
+
+So what we see is that there is still a strong correlation, with a slope
+of `r signif(m,2)` increase in cases / inmate percentage, and a less
+than stellar R squared of `r signif(rsqr,3)`.
+
+Note that Bee county has only reported 6 cases, so any statistics done
+there are suspect. So far tests at the prisons in the county have turned 
+up one positive, so they may be in good shape, hopefully.
+
+## Test Data
+
+
+The state does supply data on tests and results for each 
+[prison unit](https://www.tdcj.texas.gov/covid-19/offender_mac.html),
+both for inmates and staff, so let's take a look at that as well.
+
+Since we are looking at counties, not individuial prison units, prisons
+within a single county will be combined.
+
+```{r tests, echo=FALSE, warning=FALSE, message=FALSE}
+
+prison_tests <- readRDS("/home/ajackson/Dropbox/Rprojects/Covid/Prisons.rds")
+
+prison_tests <- prison_tests %>% 
+  mutate(Unit=str_replace(Unit, "ETTF", "East Texas")) %>% 
+  mutate(Unit=str_replace(Unit, "Fort Stockton", "Ft. Stockton")) %>% 
+  mutate(Unit=str_replace(Unit, "Jester 1", "Jester I")) %>% 
+  mutate(Unit=str_replace(Unit, "Jester 3", "Jester III")) %>% 
+  mutate(Unit=str_replace(Unit, "Jester 4", "Jester IV")) %>% 
+  mutate(Unit=str_replace(Unit, "Sansaba", "San Saba")) %>% 
+  filter(Unit!="No Longer in Custody") %>% 
+  filter(Unit!="Bambi")
+
+
+prison_tests <- left_join(prison_tests, Prison_location, by=c("Unit"="Unit_Name"))
+
+prison_tests <- prison_tests %>% 
+   group_by(County) %>% 
+   summarise_at(c("Pending_Tests",
+                  "Negative_Tests",
+                  "Positive_Tests",
+                  "Medical_Restriction",
+                  "Medical_Isolation",
+                  "Staff_Positive_Tests"),max) %>% 
+   ungroup() %>% 
+   replace_na(list(Staff_Positive_Tests=0))
+
+prison_tests %>% 
+  ggplot(aes(x=Positive_Tests)) +
+  geom_histogram(bins=20) + 
+  labs(title="Counties with Positive Tests in Prisons",
+       x="Positive Tests in County",
+       y="Number of Counties")
+
+
+
+```
+
+So the good news is that most counties with prisons, apparently have no 
+COVID-19 cases in those prisons, yet. However, it should be noted that 
+since over 2/3 of the tests yield a positive result, far too few inmates
+are being tested. The actual positive numbers are all but guaranteed to
+be significantly higher than shown.
+
+Which are the high case count counties? And how do they compare to their
+host counties?
+
+```{r which_counties, echo=FALSE, warning=FALSE, message=FALSE}
+
+prison_tests <- left_join(prison_tests, foo, by="County")
+
+prison_tests %>% 
+  ggplot(aes(x=Caseload, y=Positive_Tests)) + 
+  geom_point() + 
+  geom_smooth(method="lm") +
+   geom_text(data=subset(prison_tests, Positive_Tests > 50),
+            aes(y=Positive_Tests,x=Caseload,label=County),
+            vjust="bottom", hjust="right") +
+   labs(title="Cases in Prison vs. Cases in the County",
+        x="Cases per 100,000 Population in County",
+        y="Inmates Tested Positive")
+  
+
+```
+
+So far a weak correlation, and few of the prison units have a serious issue,
+thought the caveate about insufficient testing holds. Galveston is almost
+certainly due to inmate patients at the hospital there, which may not
+imply spread to the community, but I don't know. Has a study been done on
+the spread of the virus from hospitals treating it via the staff? 
+
+Anderson is worrisome. While they have only 18 confirmed cases, the growth
+rate is high (5 day doubling time) and shows no signs of slowing. Brazoria
+too had looked like the curve was flattening, but in the past few days 
+it has turned up again.
+
+## What about prison staff?
+
+Let's take a look at the staff, since we have the numbers.
+
+```{r staff, echo=FALSE, warning=FALSE, message=FALSE}
+
+prison_tests %>% 
+  ggplot(aes(x=Positive_Tests, y=Staff_Positive_Tests)) +
+  geom_point() +
+   geom_text(data=subset(prison_tests, Staff_Positive_Tests > 15),
+            aes(y=Staff_Positive_Tests,x=Positive_Tests,label=County),
+            vjust="bottom", hjust="right") +
+   labs(title="Staff vs Inmate Positive Tests",
+        x="Inmate Positive Tests",
+        y="Staff Positive Tests")
+```
+
+I find it worrisome that the staff and inmate numbers don't seem to correllate.
+That tells me that there likely has not been enough testing, and that the inmate
+numbers are much higher than reported. Let's look at the data in more detail.
+We'll examine the top ten counties for staff showing positive tests.
+
+```{r staff_table, echo=FALSE, warning=FALSE, message=FALSE}
+
+prison_tests %>% 
+  mutate(Total_Tests=Pending_Tests+Negative_Tests+Positive_Tests) %>% 
+  select(County, Positive_Tests, Total_Tests, Staff_Positive_Tests) %>% 
+  arrange(-Staff_Positive_Tests) %>% 
+  head(10) %>% 
+  gt() %>% 
+  cols_label(
+    County=html("<b>County</b>"),
+    Positive_Tests = html("<b>Inmate<br>Positives</b>"),
+    Total_Tests = html("<b>Inmate<br>Total Tested<b>"),
+    Staff_Positive_Tests = html("<b><center>Staff<br>Positives</center><b>")
+  ) %>% 
+  tab_header(
+    title="Top Ten Texas Counties with Infected Prison Staff"
+  )
+
+```
+
+Well, that is a little disturbing. In Bowie county the inmate and staff 
+positives are the same, but they have mostly only tested inmates who turned
+up positive. In the general population the infection rates I have seen are 
+usually about 10% of the test numbers. And some of that test total is 
+still pending. It is clear that in the prisons with the most staff
+infected, the testing program for inmates is woefully inadequate.
+
+Perhaps more disturbing is that in the course of looking at Bowie county
+in more detail I discovered that the county officials have logged 8 deaths, yet the state shows only one. No idea what could cause that discrepancy.
+
+It is clear that inmate testing is being restricted only to those inmates
+whose symptoms clearly point to COVID-19, since the majority of the tests
+turn up positive. It is therefore likely that the actual number of inmates
+who are positive for the virus is about 5-10 times larger than what has been
+published, and most are asymptomatic, and spreading to to others including
+staff, and through the staff to their local communities.
+
+
+
+```{r moreplots, include=FALSE}
+#foo %>% 
+#   filter(Rsqr>.8) %>% 
+#   select(-County) %>% 
+#   #filter(inmate_pct<20) %>% 
+#   pivot_longer(-c(inmate_pct, Rsqr), names_to = "statistic", values_to = "value") %>% 
+#   ggplot(aes(inmate_pct,value,color=Rsqr)) + 
+#   geom_point() +
+#   geom_smooth(method="lm") + 
+#   #coord_trans(x = "log10") +
+#   #annotation_logticks(scaled = FALSE) +
+#   facet_wrap(vars(statistic), scales = "free_y", nrow = 2, strip.position = "top")
+#
+#foo %>% 
+#   ggplot(aes(x=Rsqr)) +
+#   geom_histogram(bins=20)
+#
+#foo %>% 
+#   ggplot(aes(x=Rsqr, y=growth_rate)) +
+#   geom_point() +
+#   geom_smooth(method="lm")  
+#
+#foo %>% 
+# # select(-coverage, -Deaths) %>% 
+#  filter(Rsqr>.8) %>% 
+#  replace_na(list(Cases=0, Deaths=0)) %>% 
+#  arrange(-growth_rate) %>% 
+#  head(10) %>% 
+#  gt() %>% 
+#  tab_header(
+#    title="Top Ten Texas Counties Exponential Fit"
+#  )
+
+```
+
+

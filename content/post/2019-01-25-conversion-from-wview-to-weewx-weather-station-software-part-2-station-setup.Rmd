@@ -1,0 +1,169 @@
+---
+title: "Conversion from wview to weewx weather station software - Part 2, station setup"
+author: "Alan Jackson"
+date: '2019-01-25'
+slug: conversion-from-wview-to-weewx-weather-station-software-part-2-station-setup
+categories: 
+  - Weather
+tags: 
+  - weewx
+---
+
+##  Software Setup
+
+Download the software per excellent instructions in
+the [user guide](http://www.weewx.com/docs/usersguide.htm#Installing_from_DEB_package)
+
+`wget -qO - http://weewx.com/keys.html | sudo apt-key add -`  
+ 
+`wget -qO - http://weewx.com/apt/weewx.list | sudo tee` `/etc/apt/sources.list.d/weewx.list`  
+
+`sudo apt-get update`  
+
+`sudo apt-get install weewx`  
+
+Answer several questions during install:  
+
+Station Location: The Heights, Houston, Texas  
+Lat/Long: 29.794878, -95.402820  
+Altitude: 83, foot  
+Station Type: Vantage  
+usb port: /dev/vpro  
+
+Set up the usb port:  
+`sudo touch /dev/vpro  `
+`sudo gvim /etc/udev/rules.d/vpro.rules  `
+`  # Automount the VantagePro2 to port /dev/vpro.  # Install in /etc/udev/rules.d/vpro.rules`
+`  #`
+`  ACTION=="add", ATTRS{interface}=="CP2102 USB to UART Bridge Controller",MODE="0666",SYMLINK+="vpro"  `
+
+Double check that interface name is correct:  
+
+`$ udevadm info --attribute-walk --path $(udevadm info --query=path --name=/dev/ttyUSB0)  `
+
+`  looking at parent device '/devices/pci0000:00/0000:00:14.0/usb1/1-8/1-8.2/1-8.2:1.0':`
+`    KERNELS=="1-8.2:1.0"`
+`    SUBSYSTEMS=="usb"`
+`    DRIVERS=="cp210x"`
+`    ATTRS{authorized}=="1"`
+`    ATTRS{bAlternateSetting}==" 0"`
+`    ATTRS{bInterfaceClass}=="ff"`
+`    ATTRS{bInterfaceNumber}=="00"`
+`    ATTRS{bInterfaceProtocol}=="00"`
+`    ATTRS{bInterfaceSubClass}=="00"`
+`    ATTRS{bNumEndpoints}=="02"`
+`    ATTRS{interface}=="CP2102 USB to UART Bridge Controller"`
+`    ATTRS{supports_autosuspend}=="1"`
+
+`  looking at parent device '/devices/pci0000:00/0000:00:14.0/usb1/1-8/1-8.2':`
+`    KERNELS=="1-8.2"`
+`    SUBSYSTEMS=="usb"`
+`    DRIVERS=="usb"`
+`    ATTRS{authorized}=="1"`
+`    ATTRS{avoid_reset_quirk}=="0"`
+`    ATTRS{bConfigurationValue}=="1"`
+`    ATTRS{bDeviceClass}=="00"`
+`    ATTRS{bDeviceProtocol}=="00"`
+`    ATTRS{bDeviceSubClass}=="00"`
+`    ATTRS{bMaxPacketSize0}=="64"`
+`    ATTRS{bMaxPower}=="100mA"`
+`    ATTRS{bNumConfigurations}=="1"`
+`    ATTRS{bNumInterfaces}==" 1"`
+`    ATTRS{bcdDevice}=="0100"`
+`    ATTRS{bmAttributes}=="80"`
+`    ATTRS{busnum}=="1"`
+`    ATTRS{configuration}==""`
+`    ATTRS{devnum}=="98"`
+`    ATTRS{devpath}=="8.2"`
+`    ATTRS{idProduct}=="ea60"`
+`    ATTRS{idVendor}=="10c4"`
+`    ATTRS{ltm_capable}=="no"`
+`    ATTRS{manufacturer}=="Silicon Labs"`
+`    ATTRS{maxchild}=="0"`
+`    ATTRS{product}=="CP2102 USB to UART Bridge Controller"`
+`    ATTRS{quirks}=="0x0"`
+`    ATTRS{removable}=="unknown"`
+`    ATTRS{serial}=="0001"`
+`    ATTRS{speed}=="12"`
+`    ATTRS{urbnum}=="114062"`
+`    ATTRS{version}==" 1.10"`
+
+##  Try running
+
+`cd /etc/weewx  `
+`sudo weewxd weewx.conf`  
+
+Many records spool by  
+
+Looks like everything is hooked up correctly. Hooray!  
+
+Then LOOP starts. Sweet!  
+
+Look at syslog. 
+
+` Jan 26 10:05:15 carina weewx[6497]: manager: Added record 2019-01-26 10:00:00 CST (1548518400) to database 'weewx.sdb'`
+` Jan 26 10:05:15 carina weewx[6497]: manager: Added record 2019-01-26 10:00:00 CST (1548518400) to daily summary in 'weewx.sdb'`
+` Jan 26 10:05:15 carina weewx[6497]: manager: Added record 2019-01-26 10:05:00 CST (1548518700) to database 'weewx.sdb'`
+` Jan 26 10:05:15 carina weewx[6497]: manager: Added record 2019-01-26 10:05:00 CST (1548518700) to daily summary in 'weewx.sdb'`
+` Jan 26 10:05:15 carina weewx[6497]: cheetahgenerator: Generated 14 files for report StandardReport in 0.37 seconds`
+` Jan 26 10:05:16 carina weewx[6497]: imagegenerator: Generated 49 images for StandardReport in 0.57 seconds`
+` Jan 26 10:05:16 carina weewx[6497]: copygenerator: copied 9 files to /var/www/html/weewx`
+
+Looks good. webpage created. So let's shut down and prepare for real operation.
+
+Re-correct old database and copy to /var/lib/weewx/weewx.sdb
+
+Fire it up and watch the log file
+
+` Jan 26 10:40:32 carina weewx[7767]: copygenerator: copied 9 files to /var/www/html/weewx`
+` Jan 26 10:40:33 carina weewx[7767]: ftpupload: Attempt #1. Failed uploading /wview_files/daywind.png to ajackson.org. Reason: [Errno 0] Error`
+` Jan 26 10:40:33 carina weewx[7767]: ftpupload: Attempt #2. Failed uploading /wview_files/daywind.png to ajackson.org. Reason:`
+` Jan 26 10:40:33 carina weewx[7767]: ftpupload: Attempt #3. Failed uploading /wview_files/daywind.png to ajackson.org. Reason:`
+` Jan 26 10:40:33 carina weewx[7767]: ftpupload: Failed to upload file /wview_files/daywind.png`
+
+Hmmm. let's stop and look into this.
+
+Open up Nautilus to ftp to site and look around. Looks okay, but
+I'll create a new directory (weewx) and also change '/weewx' to
+'weewx' as the target in the config file.
+
+After fussing about, discovered that the answer is
+setting secure_ftp = False in the config file.
+
+Next let's look at skins
+
+I like [neowx](http://projects.neoground.com/neowx), so I will
+give it a try.
+
+Plot axes are unreadable. Install new fonts  
+sudo apt install fonts-roboto
+
+And we are done!
+
+Well, almost. The maps are from Germany, so how do I change the maps?
+
+The documentation is silent on this item, so time to start grepping
+the source directory for clues.
+
+`/etc/weewx/skins/neowx/skin.conf` is where the changes must
+be made: 
+
+` map_3_image_url = "https://radar.weather.gov/ridge/lite/N0R/HGX_0.png"`
+` map_3_link_url = "https://radar.weather.gov/ridge/radar.php?rid=hgx&product=N0R&overlay=11101111&loop=no"`
+
+However, this raises a question. The maps actually are available as
+many layers, including topography. Dare I modify the template
+the be able to accept and overlay the layers to get a better looking 
+map? Nope. The CSS file is obviously generated by an application
+and so nearly impossible to edit by hand.
+
+And what about the favicon? Apparently neowx is not copying over
+the img directory in /etc to /var. I'll just copy the favicon
+images by hand.
+
+Well that didn't work, let's try editing skin.conf and add img/*.png
+to the copygenerator section.
+
+Success! I have my favicon.
+
+And [here](http://www.ajackson.org/weewx) is the final result.

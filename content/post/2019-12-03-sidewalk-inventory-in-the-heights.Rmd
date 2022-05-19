@@ -1,0 +1,182 @@
+---
+title: Sidewalk Inventory in The Heights
+author: Alan Jackson
+date: '2019-12-03'
+slug: sidewalk-inventory-in-the-heights
+categories:
+  - Geocoding
+  - Infrastructure
+tags:
+  - Houston
+  - Mapping
+keywords:
+  - tech
+---
+
+```{r setup, include=FALSE}
+
+library(gt)
+library(tidyverse)
+
+savepath <- "~/Dropbox/Rprojects/Sidewalk_Quality/Photos"
+oldfile <- paste0(savepath, "/Photos.rds")
+OldDF <- readRDS(oldfile)
+
+numblocks <- 301 # number of blocks traversed
+goodblocks <- 21 # blocks good end to end
+
+knitr::opts_chunk$set(echo=TRUE)
+```
+
+We like to walk. When the weather cooperates, we can easily get in 5 or more miles in a day just walking around the neighborhood. We walk to the bank, to the grocery store, the hardware store, or just around the 'hood. There are two huge irritants on our walks. The terrible drivers who refuse to yield right-of-way to a pedestrian, and the abysmal quality of the sidewalks. This report will look at the sidewalks.
+
+## Summary
+
+I audited and photographed about `r round(sum(OldDF$Length)/5280,2)` miles of sidewalk in the Heights, and discovered that right at 70% of the sidewalk is in good or acceptable condition. However, that implies that 30% is not easily traversable by someone in a wheelchair, or with a walker. Additionally, I determined that there are only `r goodblocks` blocks out of the `r numblocks` I walked that would easily allow someone who is disabled to get from corner to corner. Essentially, if you are wheelchair-bound in the Heights, you will have to use the street to go anywhere. 
+
+I have also created an [interactive map showing](https://ajackson.shinyapps.io/DisplaySidewalkQuality/) the results and photos.
+
+This is still a work in progress, and I will add more data as time permits. After
+finishing the area bounded by Shepherd, Yale, 20th, and 11th, I plan to expand north,south, and east to eventually cover all the neighborhood.
+
+## The Sidewalk Study
+
+I decided I wanted to document the quality of the sidewalks in my neighborhood, and so, after some research and experimentation, I came up with the following scheme.
+
+* Use the camera and GPS on my phone to take a picture each time the sidewalk quality changed, and geo-locate it.
+* Categorize each photo as to the quality.
+* Write an online app that would allow browsing of the data on a map.
+
+It has turned out that getting accurate GPS information from the phone is a bit hit or miss. I learned that I need to have it in navigate mode to have a fighting chance of getting good data, but also need to hold it as if I was navigating with it. Even then, sometimes it is great, other times I end up deleting the photos.
+
+### Classifying Quality
+
+I did some googling to see if there were any standards regarding sidewalk quality measures, and did not find any. Or rather, I found a number of studies, all using somewhat different criteria. So, inspired by what I had read, I developed my own. My mental model was "what would impair someone in a wheelchair, using a walker, or pushing a baby carriage?" With that in mind, I came up with the list below.
+
+* Good - Smooth, flat, easily accessible.
+    + ![](/img/sidewalk_good.jpg)
+* Acceptable - Still useable by a wheelchair, but flawed.
+    + ![](/img/sidewalk_acceptable.jpg)
+* Bushes - Sidewalk obstructed fully or partially by bushes. I demand more clearance for rose bushes and blackberries.
+    + ![](/img/sidewalk_bushes.jpg)
+* Gap - A gap of several inches in the pavement.
+    + ![](/img/sidewalk_gap.jpg)
+* Offset - Adjacent panels offset by more than about an inch, usually due to Live Oak roots.
+    + ![](/img/sidewalk_offset.jpg)
+* Shattered - Cracked into many pieces and falling apart.
+    + ![](/img/sidewalk_shattered.jpg)
+* Obstructed - Blocked or impaired by an object e.g., a telephone pole.
+    + ![](/img/sidewalk_obstructed.jpg)
+* Debris/Mud - Persistent mud or debris, often supporting weeds.
+    + ![](/img/sidewalk_debrismud.jpg)
+* Gravel - Some places people have installed a gravel "sidewalk".
+    + ![](/img/sidewalk_gravel.jpg)
+* Design Fail - Usually reserved for spots where the ramp into the street is very steep, or where additional asphalt on the street has rendered the ramp useless.
+    + ![](/img/sidewalk_designfail.jpg)
+* No Curb Cut - No cut in the curb with an ADA ramp to street.
+    + ![](/img/sidewalk_nocurbcut.jpg)
+* Missing - No sidewalk. Grass, dirt, trees, etc.
+    + ![](/img/sidewalk_missing.jpg)
+
+### Gathering the data
+
+I began gathering data in early October of 2019. The process went slowly at first as I better learned what was required. As of `r format(Sys.time(), '%B %d')`, I have documented `r round(sum(OldDF$Length)/5280,2)` miles of sidewalk with `r nrow(OldDF)` measurements and photos.
+
+### Basic statistics
+
+A summary of the measurements is shown in the table below.
+
+```{r table, echo=FALSE}
+
+#Quality Measure    Number   Feet of sidewalk    Percent of total
+OldDF %>% 
+  group_by(Quality) %>% 
+  summarise(n = n(), len=sum(Length)) %>% 
+  mutate(pct=len/sum(len)) %>% 
+  dplyr::arrange(desc(pct)) %>%
+  gt() %>% 
+  tab_header(
+    title = "Sidewalk Quality in the Heights",
+    subtitle = "2019"
+  ) %>% 
+  cols_label(
+    Quality = "Quality Measure",
+    n = "Number of Segments",
+    len = "Length in Feet",
+    pct = "Fraction of Total Length"
+  ) %>% 
+  fmt_number(
+    columns = vars(len),
+    decimals=0
+    ) %>% 
+  fmt_percent(
+    columns = vars(pct)
+    )
+    
+
+```
+
+
+So about 70% of the sidewalk I looked at was good or acceptable, which means that about 30% had issues. More damning is looking at the sidewalks from corner to corner. How often could a wheelchair traverse from the street, onto the sidewalk, and all the way to the next street? I looked at `r numblocks` blocks, and of those just `r goodblocks` were continuous and without issues. Which is precisely why I regularly see people in wheelchairs, with walkers, and pushing baby carriages, in the street. 
+
+![People walking in street](/img/InStreet.jpg)
+
+### Possible Solutions
+
+#### New Construction
+
+I believe that in general, it is easier to require complete sidewalks with new residential construction - and it also is easier to afford since the cost gets added to a mortgage and is not a single $5000 bill. So in that vein, all new residential construction should require complete sidewalks. This has not been happening in the past 5-10 years. I have examples of 1-2 year-old homes which have a sidewalk that does not cross the ditch to get to the street. Is that an ordinance failure or an inspection failure? Not sure. The city documents I have read don't seem very comprehensive in their requirements.
+
+#### Commercial access
+
+In innumerable cases, there is no connection between either the sidewalk or the bike trail to places of business, except by way of the driveway entrance to the parking lot. This is dangerous, and often very inconvenient. Many businesses plant bushes or even have fencing to prevent pedestrian access from the sidewalk. There should be a regulation requiring paved pedestrian access, with striped crosswalks in the parking lot.
+
+#### Street repaving
+
+In over a dozen cases just in my neighborhood, I have examples where repaving raised the level of the street by a couple of inches, but no accomodation was made to transition to the existing ramps, rendering them basically useless for someone in a wheelchair. This is a process failure - street repaving must be coordinated with sidewalk access. Things are bad enough without compounding the problem by removing access that was working. 
+
+#### Bushes
+
+It is already illegal to block the sidewalk, apparently there is little to no enforcement. An education campaign, followed by enforcement could alleviate this issue.
+
+#### Debris and Mud
+
+Does the city own a street sweeper? I have never seen one. There are numerous corners with inches deep mud, often growing weeds. I have seen these corners remain unchanged for years. The streets are never cleaned of mud and debris, which cannot be good for the storm sewers, and is certainly not good for pedestrians. Perhaps an expansion of the "adopt a sewer" program by flagging particularly egregious spots and publishing them to try to get volunteers would help.
+
+#### Trees
+
+Politically difficult, but a prohibition on planting certain types of trees on the easement next to the sidewalk could reduce the repair rate significantly. I love Live Oaks, they are beautiful trees, but they should never be planted near a sidewalk as they will destroy it. If the requirement that homeowners must repair their sidewalk were enforced, then a tree education campaign should accompany that action.
+
+#### Telephone Poles and Boxes
+
+I don't know why there are areas where equipment boxes and telephone poles block the sidewalk, but clearly something needs to change. The message I receive is that pedestrians don't matter and sidewalks are not important.
+
+#### Safety
+
+We should be truthful and admit that we expect, even require, that the disabled wheel their scooters, walkers, and wheelchairs in the street. The sidewalk alternative is simply not there. If we admit that people are required to walk in the street, the least we, as a city, could do is try to make it a little safer. In that spirit I would propose that any block lacking an acceptable quality continuous sidewalk be required to have stop signs on both ends - to help slow the traffic and improve safety for those walking in the street. This would be a cheap and easy gain in safety, until we get sidewalks everywhere. 
+
+#### Moving Forward
+
+Philosophically, it would make sense to fund sidewalk construction and repair just like we fund streets. Both are common goods, used by everyone, and so should not be made the responsibility of the local landowner. Making that change seems unlikely though. Instead, why not have the city set up low to no interest loans for homeowners needing to make sidewalk repairs, with special grants available for lower income homeowners? Additionally, since unconnected segments of sidewalk are essentially useless, the city should coordinate sidewalk installation and repair on a block-by-block basis. 
+
+Areas for coordinating the addition and repair of sidewalks should be prioritized based on proximity to schools, hospitals, bus stops, retirement homes, and major destinations.
+
+### Conclusions
+
+Clearly this is a dangerous situation, and tremendously unfair to those who are not able-bodied. I also find it very concerning that there are no good, continuous sidewalks leading away from Love Elementary along most streets.
+
+We used to have a condo in Chicago, and now have one in Seattle which we use as a summer home, and in both cities the sidewalks are outstanding. The coverage, at least in the areas we frequent, is nearly 100%, and the quality is almost always high. Houston sidewalks more closely resemble what I have seen in third world countries than what I would expect from the country's fourth largest city. 
+
+Just the issues I have documented would cost at least $2,000,000 to fix. And probably more. But the alternative is having baby carriages, walkers, and wheelchairs in the street dodging traffic.
+
+## Notes
+
+The shortest segment I allow is 5 feet, and the segments are all in 5 foot increments. This means that for offset panels, the 5 feet is nonsensical, unless there are several panels in a row that are offset. So the lengths for that issue don't mean much - the number is more important.
+
+I adjusted all the points to parallel the street at a constant distance, removing that part of the GPS error. However, the points still contain error parallel to the street, probably an average of 2-3 meters, but sometimes much more. In some cases I adjusted the points parallel to the street, especially near the corners, but usually I just accepted them as is.
+
+I probably became less rigorous - less picky - towards the end of a traverse since I was getting tired and was anxious to finish. That is the problem with a subjective measurement.
+
+Since the city counts the bike trail as a substitute for a sidewalk in the regs, I will also do so. It is, so far, in excellent shape except for a pothole near Target.
+
+

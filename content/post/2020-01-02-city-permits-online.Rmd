@@ -1,0 +1,272 @@
+---
+title: City Permits Online
+author: Alan Jackson
+date: '2020-01-02'
+slug: city-permits-online
+categories:
+  - Infrastructure
+  - Permits
+tags:
+  - Houston
+  - Mapping
+keywords:
+  - tech
+---
+
+```{r setup, include=FALSE}
+
+library("tidyverse")
+library("stringr") # string tools
+library("rvest")# web scraping
+library("lettercase") # fiddle with letter case
+library("lubridate")
+library(sf)
+
+knitr::opts_chunk$set(echo=TRUE)
+```
+
+The city of Houston makes a file available on the web every week containing a summary of the past week's building permits. I found this file a bit difficult to digest - it needed a map, it needed search and filtering. So I wrote some code to automatically read the file in each week, merge it with the previous weeks files, and then upload that to the web where I have an application to display it. Oh, I also geocoded the addresses in the file, so they could be mapped.
+
+The viewer is of course a [shiny app.](https://ajackson.shinyapps.io/ViewPermitData/)
+
+## Gather the data
+
+The data is found at http://houstontx.gov/planning/Publications/listsrv/WebeReport.html
+
+```{r read in the data}
+
+options(stringsAsFactors = FALSE)
+
+Weekly_Rpt_URL <- "http://houstontx.gov/planning/Publications/listsrv/WebeReport.html"
+
+## Read in a single weekly report
+
+rpt <- Weekly_Rpt_URL %>% 
+  read_html() %>% 
+  html_nodes(css="table") %>%
+  html_table(header=FALSE, fill=TRUE)
+  
+rpt <- rpt[[1]]
+
+```
+
+It is contained in an html table, so that is pretty easy to read in. 
+
+In the header for the table it has the start and end dates for the table - let's pull those out, and then delete the bits of the table we don't want. Then we can rename the columns to be useful.
+
+```{r clean up table}
+#   First pull start and end dates out
+
+Start_Date <- strsplit(rpt$X1[3],"\n")[[1]][2]
+End_Date <- strsplit(rpt$X1[4],"\n")[[1]][2]
+
+#   delete unwanted columns and rows
+
+rpt <- rpt %>% 
+  select(-c(X7, X8, X9, X10)) %>%  # drop bad columns
+  slice(14:n()-7) #  drop first 7 and last 7 rows
+  
+
+#   rename columns
+
+names(rpt) <- c("Zip", "Permit_Date", "Permit_Type", "Permit_Number", "Address", "Comments")
+
+
+```
+
+## Geocoding
+
+In order to map the data, we need to attach lat long coordinates to each point. Currently, to do that, I am using the Census Bureau server to geocode the addresses. It is far from perfect, but see my previous post on geocoding for details.
+
+Note that one minor (but irritating) issue is that for some addresses the census geocoder changes the city Houston to "Clutch City". So I have to deal with that.
+
+```{r Geocoding, results="hide"}
+
+
+census_geocoder <- function(address,type,secondary,state){
+
+    library(jsonlite)
+    library(RCurl)
+
+    addy <- paste("street=",gsub(" ","+",address),sep="")
+    if(type=="z"){
+          wild <- paste("zip=",gsub(" ","+",secondary),sep="")
+        }else{
+          wild <- paste("city=",gsub(" ","+",secondary),sep="")
+    }
+    
+    state <- paste("state=",gsub(" ","+",state),sep="") 
+    string <-  paste("https://geocoding.geo.census.gov/geocoder/geographies/address?",addy,"&",wild,"&",state,"&benchmark=4&vintage=4&format=json",sep="")
+    json_file<-fromJSON(getURL(string))
+
+    #Check if there are results
+    if(length(json_file$result$addressMatches)>0){
+      
+      #If not, kick back an empty dataframe
+      if(is.null(json_file$result$addressMatches$coordinates$x[1])==TRUE){
+        print("no result")
+        return(data.frame(
+          address="",
+          lat = "",
+          lon= "",
+          tract = "",
+          block = ""))
+        
+      } else{
+
+        #  Address,lat,lon,tract, block (keep first match)
+        address <- as.character(data.frame(json_file$result$addressMatches$matchedAddress)[1,])
+        lat <- as.character(json_file$result$addressMatches$coordinates$y[1])
+        lon <- as.character(json_file$result$addressMatches$coordinates$x[1])
+        tract <- data.frame(json_file$result$addressMatches$geographies$`Census Tracts`)$GEOID[1]
+        block <- data.frame(json_file$result$addressMatches$geographies$`2010 Census Blocks`)[1,c("GEOID")]
+
+        return(data.frame(
+                address = address,
+                lat = lat,
+                lon = lon,
+                tract = tract,
+                block = block))
+    
+      }
+    }
+  } #####   end of census_geocoder function
+
+
+## Geocode the addresses
+
+rpt$match <- NA
+rpt$lat <- NA
+rpt$lon <- NA
+rpt$tract <- NA
+rpt$block <- NA
+
+for (i in 1:nrow(rpt)) {
+  answer <- NULL
+  attempt <- 1
+  while( is.null(answer) && attempt <= 3 ) {
+    if (attempt>1){print(paste("attempted", attempt))}
+    attempt <- attempt + 1
+    try(
+      answer <- census_geocoder(rpt$Address[i], "z", rpt$Zip[i], "TX")
+    )
+  } 
+  print(paste(i,":",rpt$Address[i], rpt$Zip[i], answer[1]))
+  if (!is.null(answer) && nchar(answer$address)>0){
+    rpt$match[i] <- answer[[1]]
+    rpt$lat[i] <- answer[[2]]
+    rpt$lon[i] <- answer[[3]]
+    rpt$tract[i] <- answer[[4]]
+    rpt$block[i] <- answer[[5]]
+  }
+  Sys.sleep(1)
+}
+
+##  Fix stupid Clutch City thing
+
+rpt$match <- str_replace(rpt$match, "CLUTCH CITY", "HOUSTON")
+
+```
+
+
+##  Finish up
+
+All that remains is to save the final dataframe. This is all in a self-contained R file that will be run on a cron.
+
+```{r write out weekly}
+
+## Save output
+
+outputfile <- paste(Start_Date,End_Date,sep="_")
+outputfile <- str_replace_all(outputfile,"/","_")
+
+print(paste("=========",outputfile,"=========="))
+
+#    Disable this for purposes of this blog post
+##saveRDS(rpt, paste("/home/ajackson/Dropbox/Rprojects/CityPermits/",outputfile,".rds", sep=""))
+
+print("------ and we are done")
+
+
+```
+
+Note that I insert a few messages that will appear in the log file.
+
+##  The cron jobs
+
+I have three cron jobs to take care of the whole process. The first one runs the code above to create and save a data frame with one week's worth of data. That job actually runs rather slowly, due to the geocoding. That is not a fast process. For that reason the next job kicks off some 4 hours later.
+
+```
+# m h  dom mon dow   command
+ * 16  *   *   2    /usr/lib/R/bin/Rscript '/home/ajackson/Dropbox/Rprojects/CityPermits/ReadPermits.R'  >> '/home/ajackson/Dropbox/Rprojects/CityPermits/ReadPermits.log' 2>&1
+ * 20  *   *   2    /usr/lib/R/bin/Rscript '/home/ajackson/Dropbox/Rprojects/CityPermits/merge_permits.R'  >> '/home/ajackson/Dropbox/Rprojects/CityPermits/MergePermits.log' 2>&1
+ * 21  *   *   2    /usr/bin/weex mylinux
+```
+
+## Merging the files
+
+After waiting 4 hours for the geocoding to happen, then we run the merge step to append all the files together, and more importantly, add the superneighborhood, making use of the appended coordinates. 
+
+```{r merge}
+
+googlecrs <- 4326
+
+
+inpath <- "/home/ajackson/Dropbox/Rprojects/CityPermits"
+path <- "/home/ajackson/mirrors/ajackson/Permits/data"
+
+# Read files in, do date and numeric conversion, and then join together
+
+DF <- list.files(path=inpath, pattern="^20[12].*rds$") %>%
+  purrr::set_names(.) %>%
+  map_dfr(~ readRDS(file.path(inpath, .))) %>%
+  rename(Description=Comments, Date=Permit_Date) %>% 
+  mutate(Date=as.Date(Date, format= "%Y/%m/%d"),
+         lat=as.numeric(lat),
+         lon=as.numeric(lon))
+
+#   fix clutch city
+
+DF$match <- str_replace(DF$match, "CLUTCH CITY", "HOUSTON")
+
+#   filter out rows with no coordinates
+DF <- DF %>% filter(!(is.na(DF$lat) | is.na(DF$lon)))
+
+#  Create a temporary sf data frame for doing the intersects
+# set longitudes as the first column and latitudes as the second
+dat <- data.frame(Longitude=DF$lon, Latitude=DF$lat, match=DF$match, stringsAsFactors = FALSE)
+
+dat <- st_as_sf(dat, coords=c("Longitude", "Latitude"), crs=googlecrs, agr = "identity")
+
+# prep superneighborhoods
+
+temp <- readRDS("/home/ajackson/Dropbox/CrimeStats/SuperNeighborhoodPolys.rds") %>% 
+  mutate(SNBNAME=str_to_title(SNBNAME))
+#   find points in polygons
+#   since superneighborhoods don't overlap, let's just grab the array index
+#   instead of creating a huge matrix
+a <- st_intersects(dat, temp, sparse = TRUE)
+
+# Replace empty values with 89 - there are some areas not in a neighborhood
+a <- unlist(replace(a, !sapply(a, length),89))
+# Now add super neighborhood 89 as NA
+temp[89,] <- temp[88,]
+temp$SNBNAME[89] <- "None"
+
+#   Append the super neighborhood field to the data frame
+DF$SuperNeighborhood <- temp$SNBNAME[a]
+
+###   save master file
+
+# commented out for blog
+##saveRDS(DF, paste0(path, "/MasterPermits.rds"))
+
+
+```
+
+## Upload
+
+As the final step, the master file is uploaded to the web by using weex.
+
+The viewer is pretty usable, but still under development. I need to make the links between the table and the map much tighter.
+

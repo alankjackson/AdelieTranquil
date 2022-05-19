@@ -1,0 +1,702 @@
+---
+title: "Analyzing Houston Crime Data - Part 1"
+author: "Alan Jackson"
+date: '2019-02-22'
+keywords: tech
+slug: analyzing-houston-crime-data-part-1
+tags:
+  - Crime
+  - Houston
+categories:
+  - Crime
+  - Geocoding
+---
+
+
+```{r setup, message=FALSE, warning=FALSE, results='hide', echo=FALSE}
+library(gt)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(magick)
+library(tidyr)
+library(scales)
+library(ggmap)
+library(sf)
+
+caption = "Alan Jackson, Adelie Resources, LLC 2019"
+theme_update(plot.caption = element_text(size = 7 ))
+
+googlekey <- readRDS("~/Dropbox/CrimeStats/apikey.rds")
+
+district <- "4f"
+
+PremiseTable = readRDS("/home/ajackson/mirrors/ajackson/crime/data/PremiseTable.rds")
+#   Read in translation table Premise to ShortPremise
+ptab <- read.csv("~/mirrors/ajackson/crime/data/ptable.csv", stringsAsFactors = FALSE)
+ptab <- ptab %>% mutate(ShortPremise=str_remove(ShortPremise," "))
+
+knitr::opts_chunk$set(echo = TRUE, 
+                      results='show',
+                      warning=FALSE,
+                      message=FALSE) 
+```
+
+
+## Introduction
+
+In late 2017 I did an [analysis of crime data](http://www.ajackson.org/crime/index.html) in my neighborhood (The Heights) using the online [Houston Police Department data](http://www.houstontx.gov/police/cs/beatpages/cs2a30.htm).
+
+This was so interesting that I foolishly decided to expand the effort to cover the whole city. After all, how hard could it be to go from analyzing one police beat with about 13,000 records, to analyzing 109 beats, with a corresponding increase in volume? This effort is still ongoing in fits and starts today, but I thought it would be useful to start documenting the journey now before the pain fades away. This is largely a tale of data cleanup - as any real data analysis project is.
+
+As a sidenote, I spent 35 years as a Geophysicist for a major oil company, much of the time my job was involved with processing and interpreting data - seismic data, well data, and others. I also served several times on teams attempting to develop "a database for all our E&P data". Which failed on every attempt. But one salient point we always found through interviews and literature searches, was that searching for, digitizing, cleaning, verifying, and organizing data was about 90% of what technical folks like geologists and geophysicists did. So this is nothing new to me. It is the curse of trying to interface our clean, simple models to the chaotic, messy real world. And we always have to make the data fit the pristine environment of our models. So we do cleanup.
+
+### What did I learn
+
+So that you don't have to read all the way to the end to get my learnings from this experience, I will place them conveniently up here near the top.
+
+1. The paradigm sort(unique(variable)) is a quick and easy way to look at a limited set of strings and see anomalies.
+
+2. Always save a copy of the raw, unmolested data after reading it in. Reading in one district takes about an hour, and I had enough changes in strategy, issues, and just plain screwups that I read them each in 3 or 4 times before I started saving a copy of the raw data.
+
+3. Before applying a regular expression to a file, test to see what it will do. It is often impossible to undo it.
+
+4. Don't try to do things that require thinking close to bedtime. Make notes and do them tomorrow.
+
+5. Document why you are doing things. Before you forget.
+
+6. Making a checkpoint save occasionally while developing a data cleanup runstream makes it easier to back up a few steps when you inevitably hopelessly destroy your working dataset.
+
+7. Use of a mask variable to isolate the rows to be modified can be very readable and easy. For example, the street field may contain "Katy" or "Katy Fwy", while the type field may or may not contain "Fwy". I can create 
+```{r example, eval=FALSE}
+mask <- df$type=="FWY"
+mask2 <- df$street=="KATY FWY"
+```
+and then change "KATY FWY" to "KATY" wherever mask&mask2 is True. This also makes it easy to show what will be operated on before pulling the trigger (see 3 above).
+
+
+## The data
+
+On the HPD website are html tables, both by district and by beat of crime incidents, each table representing one month. The department is organized into Regions, which contain Districts, which contain Beats. So obviously we want to read the data in by District, as that is the largest division available. There are 21 Districts (if I ignore the weird one that only operates at the airport), each with about 3-6 Beats.
+
+```{r look at the data, warning=FALSE}
+
+#   Some data
+
+example <- tribble(
+  ~Date, ~Hour, ~Offense_Type, ~Beat, ~Premise, ~BlockRange, ~StreetName, ~Type, ~Suffix, ~'#offenses',
+"1/25/2017", "17", "Theft", "2A30", "Road, Street, or Sidewalk", "400-499", "24TH", "ST", "W", "1",
+"1/25/2017", "17", "Theft", "2A30", "Apartment", "800-899", "USENER", "-", "-", "1",
+"1/25/2017", "19", "Theft", "2A30", "Apartment", "1600-1699", "BLOUNT", "ST", "-", "1",
+"1/26/2017", "13", "Burglary", "2A30", "Residence or House", "UNK", "2", "ST", "-", "1"
+)
+
+example %>% 
+  gt() %>% 
+  tab_header(title="Example of some raw data") %>% 
+  cols_label()
+```
+
+
+Some issues become immediately apparent, even with this tiny dataset. Sometimes the block range is unknown. The type and suffix fields may contain a dash - signifying no value. The suffix is actually a prefix. 
+
+So let's work through the data.
+
+To read in the files I used rvest to scrape the data. However there were many issues. 
+
+### Reading issues
+
+The files start at January 2009, and when I did this work, ended in October 2017. 
+
+1. Jan-May 2009 missing the “number of offenses” column and recorded time instead of hour 
+
+2. Months prior to June 2014 used premise codes instead of strings 
+
+3. Tables from Jan-July, Sept and Nov 2009, and January 2010 are encoded differently and require xpath='/html/body/table' instead of xpath='/html/body/div/table' 
+
+4. June and July 2014 are missing the Premise column. 
+
+5. Sporadically a table turns up with extra empty columns labeled “Fieldxx” for some number xx. 
+
+6. August 2017 is missing in the district files, but all the beats that form it are available. 
+
+All that just to read in the silly files. Suffice it to say that I have some nasty if/else filled code to deal with all the special cases and exceptions. I won't share that here. I don't think it is enlightening. If you care, it is on my github site.
+
+So let's work through the cleanup, field by field, using district 4f as an example
+
+### how many nulls?
+
+```{r nulls}
+#################################
+# How many nulls everywhere?
+#################################
+df2 <- readRDS(file="~/Dropbox/CrimeStats/District4fRawData.rds")
+
+df2 %>%
+    map_df(function(x) sum(is.na(x))) %>%
+    gather(feature, num_nulls) %>%
+    print(n = 100)
+```
+
+Well this is encouraging. We knew about the Premises missing and issues with number of offenses, so that is a little reassuring. So let's work our way through each column.
+
+### Dates
+
+There are scattered incidents (41 out of 22,700) going back to 1916. These are not useful, so anything prior to January 2009 will be dropped, as well as a small number from the future. The whole record will be discarded since there are not very many and without a date, the data is nearly useless.
+
+We also will convert the dates to an actual datetime, and plot up a bar chart of incidents per day as a good way to spot strange behavior.
+
+```{r dates}
+############
+##  convert date string to actual date, and then trim bad dates out
+############
+df2$Date <- mdy(df2$Date)
+
+#   How many bad dates?
+
+df2 %>% filter(!between(Date,mdy("1/1/2009"),mdy("1/1/2018")))
+
+df2 <- df2 %>%
+  filter(between(Date,mdy("1/1/2009"),mdy("1/1/2018")))
+
+df2 %>% group_by(Date) %>%
+  summarise(Total_Incidents_per_Day=n()) %>%
+ggplot(aes(Total_Incidents_per_Day)) +
+  geom_bar()
+
+```
+
+### Hour of day
+
+The next field is the hour of day. It should be an integer from 0 to 23, but we have read it in as a character, because of "issues". So we will clean it up and convert to an integer. Specifically, occasionally the field contains spurious non-numeric characters, usually a single quote. No idea how that happened. 
+
+```{r hour}
+sort(unique(df2$Hour)) # look for issues
+# remove non-numerics and change to integer
+df2$Hour <- str_replace_all(df2$Hour,"\\D","")
+df2$Hour <- as.integer(df2$Hour)
+
+ggplot(data=df2) +
+  geom_bar(aes(x=Hour)) +
+  labs(title=paste("Incidents per Hour of Day, District",district))
+
+```
+
+
+### Offense Type
+
+Whoops! BIG problem. Apparently, prior to June 2009, Theft was recorded as Burglary. Also, after June 2009, DWI and Narcotic offenses were no longer recorded. Which makes all the data prior to June 2009 useless. So, it will be deleted.
+
+Extra carriage return characters appear, Forcible Rape and Rape (consolidate), Murder and Murder & Manslaughter (consolidate). Burglary and Burglary of a motor vehicle – both become Burglary. 
+
+One record has an offense type of "1". We'll just delete that record.
+
+First some utility functions
+```{r utilities}
+# The purpose of these utilities is to allow readable creation
+# of regular expressions for changing strings, a way to test
+# the expressions before applying, and a tool to apply them.
+
+#     Create dictionary dataframe of pattern/replacement
+#     (It sure would be nice if R had a hash table)
+Makedict <- function(dictionary) {
+  dict <- cbind.data.frame(split(dictionary, rep(1:2, times=length(dictionary)/2)), stringsAsFactors=F)
+  names(dict) <- c("From", "To")
+  return(dict)
+}
+
+#   test the searches first to see what they will find
+testregex <- function(dframe, col, pat) { # input data frame and regex
+  for(i in 1:length(pat[,1])) {
+    print(paste("Pattern: ",pat[i,1]))
+    hits <- unique(dframe[[col]][grepl(pat[i,1],dframe[[col]])])
+    if (length(hits)>0){
+      print(paste("   Result: ", hits))
+    }
+    else {
+      print("No hits")
+    }
+  }
+}
+
+#   apply to input array
+applyregex <- function(dframe, col, pat) {
+  for(i in 1:length(pat[,1])) {
+  dframe[[col]] <- str_replace_all(dframe[[col]],pat[i,1],pat[i,2])
+  }
+  return(dframe)
+}
+
+```
+
+Now lets look at the offense field
+
+```{r Offense Type}
+sort(unique(df2$Offense_Type))
+
+#   clean up Offense_Type and look again for issues
+
+#   dictionary of changes
+dictionary <- c("\n\\s+",                       " ", 
+                "Forcible ",                    "", 
+                "AutoTheft",                    "Auto Theft",
+                " of a Motor Vehicle",          "",
+                " & Nonnegligent Manslaughter", ""
+                )
+dict <- Makedict(dictionary)
+#   test them first
+testregex(df2, "Offense_Type", dict)
+#   Apply
+df2 <- applyregex(df2, "Offense_Type", dict)
+#   One record has an incident type of "1". We'll just delete that record.
+df2 <- df2[!df2$Offense_Type=="1",]
+
+sort(unique(df2$Offense_Type))
+#   Bar chart of various incidents
+ggplot(data=df2) +
+  geom_bar(aes(x=Offense_Type)) +
+  labs(title=paste("Incidents per Offense Type, District",district)) +
+  coord_flip()
+# Plot of incidents per month vs date
+per_month = df2 %>% 
+  mutate(mon = as.numeric(format(Date, "%m")), yr = as.numeric(format(Date, "%Y"))) %>%
+  mutate(YrMon=yr+mon/12) %>%
+  group_by(YrMon, Offense_Type) %>%
+  summarize(total=n())
+
+ggplot(data=per_month, mapping=aes(x=YrMon, y=total, color=Offense_Type)) +
+  geom_point() +
+  geom_line() +
+  labs(title="Total incidents", y="Total incidents per month", x="Averaged Monthly") 
+
+#   filter out past 2010 to get a better view of what is going on
+per_month = df2 %>% 
+  mutate(mon = as.numeric(format(Date, "%m")), yr = as.numeric(format(Date, "%Y"))) %>%
+  mutate(YrMon=yr+mon/12) %>%
+  filter(YrMon<2011) %>%
+  group_by(YrMon, Offense_Type) %>%
+  summarize(total=n())
+ggplot(data=per_month, mapping=aes(x=YrMon, y=total, color=Offense_Type)) +
+  geom_point() +
+  geom_line() +
+  labs(title="Total incidents expanded", y="Total incidents per month", x="Averaged Monthly") 
+
+#     Get rid of all data prior to June 2009, since it cannot be compared with later data
+
+df2 <- df2 %>%
+  filter(between(Date,mdy("6/1/2009"),mdy("1/1/2018")))
+sort(unique(df2$Offense_Type))
+
+```
+
+###  Beat field
+
+Should be pretty simple, but for some strange reason has the occasional odd single quote floating around.
+
+```{r Check Beat data}
+#################################
+# Beat
+#################################
+
+sort(unique(df2$Beat))
+# remove non-alphanumerics
+df2$Beat <- str_replace_all(df2$Beat,"\\W","")
+
+sort(unique(df2$Beat))
+```
+
+## Premise field
+
+Where did the crime occur - what sort of place? There are 132 premise descriptions! Everything from "Residence or House" to "Vacant Bank". Not too many incidents in that last one, as you can imagine. So in addition to cleaning up data entry errors, I created a table of only 7 premises - the statistics are completely dominated by the top 10-15. My shortened set is Parking, Residence, Business, Street, Unk, Other, and  Garage.
+
+1.6% of the premise fields are blank. Almost all of them are from June and July 2014, but there are a few others scattered about. To remove the NA, to make it easier to use the data, change to the string UNK. 
+
+Also make Premise == blank “UNK”, and fix typo errors. Lots of typos. 
+
+```{r Check Premise data}
+#################################
+# Premise
+#################################
+
+per_month = df2 %>% 
+  mutate(mon = as.numeric(format(Date, "%m")), yr = as.numeric(format(Date, "%Y"))) %>%
+  mutate(YrMon=yr+mon/12) %>%
+  group_by(YrMon) %>%
+  summarize(count=sum(is.na(Premise)))
+
+ggplot(data=per_month, mapping=aes(x=YrMon, y=count)) +
+  geom_point() +
+  labs(title="Blank Premise fields per month", y="Total blanks per month", x="Averaged Monthly") 
+
+
+#   make more manageable by changing NULL to UNK
+df2$Premise[is.na(df2$Premise)] <- "Other or Unknown"
+
+#   Clean up obvious issues
+
+dictionary <- c("\n\\s+",    " ",  # carriage returns
+                "^$",        "Other or Unknown", 
+                "  ",        " ",  #  double space
+                " and ",     " & ",
+                " And ",     " & ",
+                "/",         " or ",
+                ", ",        ",",
+                "Amuse. Park,Bowl.","Amusement Park,Bowling",
+                "ment Rent", "ment or Rent",
+                "Saving ",   "Savings "
+                )
+dict <- Makedict(dictionary)
+#   test them first
+testregex(df2, "Premise", dict)
+#   Apply
+df2 <- applyregex(df2, "Premise", dict)
+
+dictionary <- c(
+                "rch,Syn",            "rch or Syn",
+                " Or ",               " or ",
+                "Sup\\.",             "Supplies",
+                "Daycare or Child",   "Daycare,Child",
+                "Factory or Manu",    "Factory, Manu",
+                "Field or Woods",     "Field,Woods,Forest,Park",
+                "Tv",                 "TV Store",
+                "Grocery Store",      "Grocery",
+                "Pool$",              "Pool,Spa",
+                "Hse,Indr",           "House,Indoor"
+)
+dict <- Makedict(dictionary)
+#   test them first
+testregex(df2, "Premise", dict)
+#   Apply
+df2 <- applyregex(df2, "Premise", dict)
+
+
+dictionary <- c(
+                "Misc\\.",               "Miscellaneous",
+                "Hme",                   "Home ",
+                "Etc\\.",                "Etc",
+                "^Other,Unknown, or Not Listed$","Other or Unknown",
+                "^Not Listed$",            "Other or Unknown",
+                "Swim ",                 "Swimming ",
+                "wn,Re",                 "wn or Re",
+                "Physician's Office",    "Physician,Doctor,Dentist's Office",
+                " Of ",                  " of ",
+                "ad,St",                 "ad or St"
+)
+dict <- Makedict(dictionary)
+#   test them first
+testregex(df2, "Premise", dict)
+#   Apply
+df2 <- applyregex(df2, "Premise", dict)
+
+dictionary <- c(
+                "Sprts",           "Sports",
+                "ts Cra",          "ts & Cra",
+                "Apartment,Dorms", "Apartment,Inn,Dorms,Boarding House",
+                "Occ Resd\\(House,Townhs,Dplex\\)","Occupancy Residence \\(Houses,Townhouses,Duplexes,Etc\\)",
+                "Fac \\(Barn,Garage,Warehouse\\)","Facility \\(Barns,Garages,Warehouses,Etc\\)",
+                "cord,Stat",        "cord or Stat",
+                "care,Chil",        "care or Chil",
+                "tory,Manu",        "tory or Manu",
+                ",Pet$",            ",Pet Stores",
+                "ium,Spor",         "ium or Spor"
+)
+dict <- Makedict(dictionary)
+#   test them first
+testregex(df2, "Premise", dict)
+#   Apply
+df2 <- applyregex(df2, "Premise", dict)
+
+dictionary <- c(
+                "Motel,Inn,Etc",        "Motel,Etc",
+                "Out Build or Monument or UnderConst", "Structure (Out Buildings,Monuments,Buildings Under Construction,Etc)",
+                "(\\w),or ",            "\\1 or ",
+                "Contra-Flow or Managed or HOV Lanes", "Contra-Flow or Hov",
+                "Lake or Pond or Waterway or Bayou or River", "Lake or Waterway or Bayou",
+                "Veh\\.", "Vehicle",
+                "Auditor\\.", "Auditoriums",
+                "Blding$", "Building",
+                " or University$", "",
+                "Factory, Manufacturing or Industrial", "Factory or Manufacturing Building",
+                "Factory or Manufacturing or Industrial", "Factory or Manufacturing Building",
+                "Vacant Industrial or Manufacturing or Industrial", "Vacant Industrial or Manufacturing Building",
+                "Light Rail Vehicle", "Light Rail (Metro Rail) Vehicle",
+                "(\\w),(\\w)",          "\\1 or \\2"
+)
+dict <- Makedict(dictionary)
+#   test them first
+testregex(df2, "Premise", dict)
+#   Apply
+df2 <- applyregex(df2, "Premise", dict)
+
+dictionary <- c(
+                "Lake or Pond or Waterway or Bayou or River", "Lake or Waterway or Bayou",
+                "Other or Unknown or Not Listed", "Other or Unknown"
+)
+dict <- Makedict(dictionary)
+#   test them first
+testregex(df2, "Premise", dict)
+#   Apply
+df2 <- applyregex(df2, "Premise", dict)
+
+sort(unique(df2$Premise))
+
+ggplot(data=df2) +
+  geom_bar(aes(x=Premise)) +
+  labs(title=paste("Incidents per premise, District",district)) +
+  coord_flip()
+
+reorder_size <- function(x) {
+  factor(x, levels = names(sort(table(x))))
+}
+ggplot(df2, aes(reorder_size(df2$Premise))) + geom_bar() + coord_flip()
+
+# Plot top 20 premises in order of prominence
+
+df2 %>% group_by(Premise) %>% 
+  count() %>% 
+  arrange(desc(n)) %>%
+  head(20) %>% 
+  ungroup() %>% 
+  mutate(Premise=factor(Premise)) %>% 
+  ggplot(aes(fct_reorder(Premise, n))) +
+    geom_bar(stat="identity", aes(y=n)) +
+    coord_flip()
+
+a <- left_join(df2,ptab,by="Premise")
+# make sure we matched everything - answer here should be zero
+sum(is.na(a$ShortPremise))
+
+sort(table(a$ShortPremise),decreasing=TRUE)
+df2 <- a
+rm(a)
+
+```
+
+### Block range
+
+Sometimes these end up in E notation, so I will need to repair that. Also replace a blank field with "UNK".
+
+```{r Check Block_Range}
+#################################
+# Block_Range
+#################################
+sort(unique(df2$Block_Range))
+
+df2$Block_Range <- str_replace_all(df2$Block_Range, "1\\.1103e\\+006-1\\.1104e\\+006", "")
+df2$Block_Range <- sub("^$","UNK", df2$Block_Range)
+```
+
+### Type
+
+This is the type of street: ST, DR, RD, FWY, etc. I'll clean up a few obvious issues here, and get rid of the dash representing nothing.
+
+```{r Check Type}
+#################################
+# Type
+#################################
+
+sort(unique(df2$Type))
+df2$Type <- str_replace_all(df2$Type," ","") 
+df2$Type <- str_replace_all(df2$Type,"-","") 
+df2$Type <- str_replace_all(df2$Type,"FWY SER","FWY") 
+df2$Type <- str_replace_all(df2$Type,"FWYSER","FWY") 
+df2$Type <- str_replace_all(df2$Type,"^CIR$","CIRCLE") 
+```
+
+### Street names
+
+Saving the best for last - fully half the code for reading in and cleaning up a district file is cleaning up the street names. And the most labor intensive. My plan this year is to try to train a neural net to fix spelling errors in street names, since I have a huge, hand-curated dataset to use for training. But that is the future.
+
+#### Spelling accuracy
+
+How accurately do the street names need to be spelled, and why?
+
+One goal is to have a local file of block, street that I can use to geocode without having to go online. But for that to work, the street names need to be accurate. Which raises the question - what is the authoritative source for the names?
+
+I have 3 sources for local street names. Google maps, the U.S. Census Bureau geocoder - based on the Tiger files, and the City of Houston GIS department.
+
+I choose to make the city GIS data authoritative - it does seem that they would take special care since the city has street naming authority and those names get propagated to the USPS and to 911.
+
+Interestingly, the census usually, but not always, agrees with the city. Google, more often, does not. Road vs. Drive, Beverlyhill vs. Beverly Hill, Martin Luther King Jr vs. Martin Luther King. Later, when geocoding, these differences will be a source of much frustration and gnashing of teeth.
+
+Spelling matters - there are streets that are distiguished only by their suffix or prefix. Gessner Dr is not the same as Gessner St. They are miles apart. So for geocoding, getting it right is crucial.
+
+I will only show a portion of the code here, as it is pretty boring stuff for the most part. Correcting a lot of trivial spelling errors. There are a few more general issues, which I will illustrate.
+
+Sometimes apartment or suite numbers appear, many have issues like ending in “ST, STREET, ST.”, or no ending. In other cases there are errors like "HOGAN ST APT 2", or really weird ones like “1000 6 1", “"1102 1", which are unintelligible, at least to me.
+
+Convert all the freeways to the named designators, e.g., IH 10 becomes Katy Fwy. For Loop 610, conform to “quadrant LOOP”, e.g., N Loop Fwy.
+
+```{r Check Street}
+#################################
+# Street
+#################################
+
+#   copy Street to OldStreet to save it
+
+##---new---##
+df2$OldStreet <- df2$Street
+
+keepdf2 <- df2 # just in case I screw up
+
+#####  Remove extra blanks, periods, apartments, etc
+dictionary <- c(
+                "\\.",      " ",  # remove periods
+                "-",       " ", # remove dashes
+                "\\s{2,}",  " ", # remove extra spaces
+                "^\\s+",    "",  # remove leading spaces
+                "\\s+$",    "",  # remove trailing spaces
+                "\n\\s+",   " ",  # remove carriage returns
+                " APT\\s*#*\\d*$", "", # remove Apartment numbers
+                " APT\\s*#*[A-Z0-9]*$", "", # remove Apartment numbers
+                " APARTMENT\\s*#*[A-Z0-9]*$", "", # remove Apartment numbers
+                " UNIT \\w*",  "", #  remove Unit numbers
+                " NO\\s*\\d+", "", #  more Unit numbers 
+                " STE\\s*#*[A-Z0-9]*$", "",  #  SUITE number
+                " SUITE\\s*#*[A-Z0-9]*$", ""  #  SUITE number
+)
+dict <- Makedict(dictionary)
+#   test them first
+testregex(df2, "Street", dict)
+#   Apply
+df2 <- applyregex(df2, "Street", dict)
+
+
+dictionary <- c(
+                "^#\\s?[A-Z]? ",  "",  #  more address removal
+                " #\\s?[A-Z]?$",   "",  #  more address removal
+                " #\\s?[0-9]*$",   "",  #  more address removal
+                " [IO]B$",        "",
+                " OBIB",          "",
+                " UTUR",          "",
+                " [IO]B",         "",
+                " STREET$",       " ST",
+                " STREET",        "",
+                "([A-Z ]){1}/([A-Z ]){1}",  "\\1 @ \\2", #  intersections
+                "  ",             " ",   #  remove any double spaces
+                " EXIT$",         "",
+                "^\\d{3,6} ",     "",
+                "#\\w+",          ""
+)
+dict <- Makedict(dictionary)
+#   test them first
+testregex(df2, "Street", dict)
+#   Apply
+df2 <- applyregex(df2, "Street", dict)
+
+#   null out nonsense records, like PO Box
+dictionary <- c(
+                "P ?O ?BOX\\s?","",
+                "^BOX\\s?\\d*$","",
+                "POB\\s","",
+                "PO BX","",
+                "^PO\\s\\d*$","",
+                "HOMELESS","",
+                "\\sBOX\\s\\d*$",""
+)
+dict <- Makedict(dictionary)
+#   view them first
+testregex(df2, "Street", dict)
+
+#   just NA those PO BOX addresses, but leave HOMELESS alone
+df2$Street[grepl("P ?O ?BOX\\s?",df2$Street)] <- NA
+df2$Street[grepl("^BOX\\s?\\d*$",df2$Street)] <- NA
+df2$Street[grepl("POB\\s",df2$Street)] <- NA
+df2$Street[grepl("PO BX",df2$Street)] <- NA
+df2$Street[grepl("^PO\\s\\d*$",df2$Street)] <- NA
+df2$Street[grepl("\\sBOX\\s\\d*$",df2$Street)] <- NA
+
+#   clean out numbers after road designations, and shorten
+dictionary <- c(
+                "FARM TO MARKET", "FM",
+                "NASA RD 1", "NASA ROAD 1",
+                "ST \\d+$",     "ST",
+                "DR \\d+$",     "DR",
+                "RD \\d+$",     "RD",
+                "AVE \\d+$",    "AVE",
+                "BLVD \\d+$",   "BLVD",
+                "AVENUE$",      "AVE",
+                "ROAD$",        "RD",
+                "DRIVE$",       "DR",
+                "LANE$",        "LN",
+                " CIR$",        " CIRCLE",
+                " COURT$",      " CT",
+                " PLACE$",   " PL",
+                " PVT ",        " ",
+                " UNIT$",       "",
+                "([A-C,EFG,J-L,N-Q,T-W,Z]) \\d{2,6}$",   "\\1",
+                "\\sSPDWY$",    " SPEEDWAY"
+)
+dict <- Makedict(dictionary)
+#   test them first
+testregex(df2, "Street", dict)
+#   Apply
+df2 <- applyregex(df2, "Street", dict)
+
+#   Some common errors that reappear with regularity
+dictionary <- c(
+                " ENT$",           "",
+                " SOUTH$",       "",
+                " SUITE? \\w*$",   "",
+                "BOULEVARD",       "BLVD",
+                "BISSONET", "BISSONNET",
+                "^BLK ", "",
+                "^ ", "",
+                " STRE$", "",
+                "SPEEDWAY",        "SPDWY",
+                " LANE \\d*$",  " LN",
+                "FREEWAY$",      "FWY",
+                "PARKWAY$",     "PKWY",
+                " \\+ ",     " @ ",
+                " AT ",          " @ ",
+                " & ",          " @ ",
+                "COUNTY ROAD",         "CR",
+                " DR \\w*$",     " DR",
+                " AVEN$",      " AVE",
+                " STE [A-Z0-9 ]*$",   "",
+                "\\d+O\\d+","",
+                " ENTR?$",         ""
+)
+
+dict <- Makedict(dictionary)
+#   test them first
+testregex(df2, "Street", dict)
+#   Apply
+df2 <- applyregex(df2, "Street", dict)
+
+#   begin going through dataset in blocks of 100 visually inspecting
+
+tail(head(sort(unique(df2$Street)),100),100)
+
+#####    many lines of inspect, correct, and check removed
+
+#   Put ST/RD/DR/CT/BLVD/LN/AVE/CIRCLE/WAY into Type field and remove from Street field
+matchstring <- c(" ST$| RD$| DR$| LN$| WAY$| BLVD$| CIRCLE$| CT$| PL$| CIR$| AVE$")
+maska <- grepl(matchstring, df2$Street) # does street name have suffix?
+masktype <- grepl("-", df2$Type) # is type field blank?
+matched_values <- str_extract(df2$Street[maska&masktype],matchstring)
+#  put value into Type field
+df2$Type[maska&masktype] <- matched_values  
+#  remove value from Street field
+df2$Street[maska&masktype] <- sub(matchstring, "",
+                                  df2$Street[maska&masktype])  
+
+#   clean up extra space from Type field
+df2$Type <- str_replace(df2$Type,"^ *","")
+
+#######   much more, especially around freeways and hiways
+
+```
+
+### Save the results
+
+Finally I save the resulting, mostly clean, file. The next big step is geocoding, and it will reveal many more issues that will need to be addressed. But that will be part 2.
+
+```{r save the results, eval=FALSE}
+#################################
+# Save the results
+#################################
+
+saveRDS(df2, file=paste("~/Dropbox/CrimeStats/District_",district,"_CleanData.rds",sep=""))
+```
+

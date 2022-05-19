@@ -1,0 +1,183 @@
+---
+title: Covid Vaccine
+author: Alan Jackson
+date: '2021-01-03'
+slug: [covid-vaccine]
+categories:
+  - Covid-19
+  - Data Fitting
+tags:
+  - Covid-19
+  - Texas
+keywords:
+  - tech
+---
+
+```{r setup, include=FALSE}
+
+library("tidyverse")
+library("stringr") # string tools
+library("lubridate")
+
+path <-  "/home/ajackson/Dropbox/Rprojects/Covid/"
+
+df <- readRDS(paste0(path, "Vaccinations.rds"))
+covid <- readRDS(paste0(path, "Covid.rds"))
+
+knitr::opts_chunk$set(echo=TRUE)
+```
+
+December 2020 vaccine distribution and administration began. I started trapping 
+the daily spreadsheet from the state health department that tracked progress.
+This blog entry is really for prototyping some of the data cleanup and displays
+that I will incorporate into my shiny app.
+
+Let's take a look at data issues.
+
+```{r}
+
+df %>% 
+  filter(!is.na(Pct_given)) %>% 
+  ggplot(aes(x=Pct_given)) +
+  geom_histogram()+
+  labs(x="Percent Distributed Administered",
+       title="Distribution of Administered Vaccine")
+  
+#   after cleaning
+
+df %>% 
+  filter(!is.na(Pct_given)) %>% 
+  filter(Pct_given<100) %>% 
+  ggplot(aes(x=Pct_given)) +
+  geom_histogram(binwidth=2)+
+  labs(x="Percent Distributed Administered",
+       title="Distribution of Administered Vaccine")
+```
+
+Well, that's irritating. Some folks are giving shots they don't have.
+
+```{r}
+
+#   Negative doses
+df %>% 
+  filter(County != "Texas") %>% 
+  group_by(County) %>% 
+    mutate(min_admin=min(Daily_adm)) %>% 
+  ungroup() %>% 
+  arrange(County) %>% 
+  filter(min_admin<0) %>% 
+  ggplot(aes(x=Date, y=Doses_admin, color=County)) +
+  geom_line()+
+  theme(legend.position = "none") + 
+  labs(x="Date", y="Cumulative Doses",
+       title="Administered Vaccine")
+```
+
+So we have a few counties where the cumulative numbers have decreased. That is
+disappointing.
+
+```{r}
+
+# how fair is the distribution?
+
+df %>% 
+  group_by(County) %>% 
+    mutate(fairness=10000*Doses_alloc/Pop_adult) %>% 
+    summarise(fairness=max(fairness, na.rm=TRUE)) %>% 
+  ggplot(aes(x=fairness)) +
+  geom_histogram()+
+  labs(x="Per Capita Doses Distributed",
+       title="Distribution of Administered Vaccine")
+
+df %>% 
+  filter(County!="Texas") %>% 
+  group_by(County) %>% 
+    mutate(fairness=10000*Doses_alloc/Pop_adult) %>% 
+    summarise(fairness=max(fairness, na.rm=TRUE), Pop_adult=max(Pop_adult, na.rm=TRUE)) %>% 
+  ggplot(aes(x=fairness, y=Pop_adult)) + 
+  geom_point() + 
+  labs(x="Per Capita Doses Distributed (Doses per 10,000)",
+       y="County Population",
+       title="Distribution of Administered Vaccine")
+
+
+df %>% 
+  filter(County!="Texas") %>% 
+  group_by(County) %>% 
+    summarise(Doses_alloc=max(Doses_alloc, na.rm=TRUE), Pop_adult=max(Pop_adult, na.rm=TRUE)) %>% 
+  ggplot(aes(x=Doses_alloc, y=Pop_adult)) + 
+  geom_point() + 
+  scale_x_log10() + 
+  scale_y_log10() +
+  labs(x="Log Doses Distributed",
+       y="Log County Population",
+       title="Distribution of Administered Vaccine")
+```
+
+Looks pretty fair. At low numbers can see the effect of minimum vaccine lot size.
+
+```{r}
+
+#   % over time
+
+df %>% 
+  group_by(County) %>% 
+    mutate(Pct_Coverage=100*Doses_admin/Pop_adult) %>% 
+  ungroup() %>% 
+  filter(Pct_Coverage<25) %>% 
+  ggplot(aes(x=Date, y=Pct_Coverage, color=County)) + 
+  geom_line() + 
+  theme(legend.position = "none") + 
+  labs(x="Date",
+       y="Percent Coverage",
+       title="Percent of each County Vaccinated")  
+  
+```
+
+Cottle county jumps to almost 140%, the rest are below 25%.
+
+```{r}
+
+#   How to best calculate the date when everyone is vaccinated?
+
+#   Calculate an average inoculation rate over the last 7 days
+
+this_day <- lubridate::today()
+
+df %>% 
+  filter(Date>last(Date)-7) %>% 
+  group_by(County) %>% 
+    summarize(Inoculation_rate=mean(Daily_adm, na.rm=TRUE),
+              Pop_adult=last(Pop_adult),
+              People_one_dose=last(People_one_dose)) %>% 
+  mutate(Finish_date=as_date(this_day+((Pop_adult-People_one_dose)/Inoculation_rate+28))) %>% 
+  mutate(DaysFromNow=((Pop_adult-People_one_dose)/Inoculation_rate+28)) %>% 
+  ggplot(aes(x=DaysFromNow/7)) +
+  geom_histogram() +
+  labs(x="Weeks from Today",
+       title="Weeks from present to reach full vaccination by county",
+       subtitle="Rate derived from last 7 days")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
