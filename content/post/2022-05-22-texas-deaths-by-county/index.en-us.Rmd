@@ -1,0 +1,70 @@
+---
+title: Texas Deaths by County
+author: Alan Jackson
+date: '2022-05-22'
+slug: '[texas_deaths_by_county]'
+categories:
+  - Mortality
+tags:
+  - Texas
+keywords:
+  - tech
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+#library(broom)
+#library(gt)
+#library(ggrepel)
+
+#   Directory where data is stored
+
+DataCovid <- "/home/ajackson/Dropbox/Rprojects/Covid/Today_Data/"
+DataVotes <- "/home/ajackson/Dropbox/Rprojects/Voting/"
+DataDeaths <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/CDC_Wonder/"
+
+#   Build Votes by county tibble
+
+Votes <- read_csv(paste0(DataVotes, 
+                         "CountybyCountyCanvassReport2020Pres.csv")) %>% 
+  rename(Candidate="CANDIDATE NAME", 
+         "Office"="OFFICE NAME", 
+         "County"="COUNTY NAME",
+         Votes="TOTAL VOTES PER OFFICE PER COUNTY") %>% 
+  filter(grepl("BIDEN|TRUMP", Candidate)) %>% 
+  select(Candidate, County, Votes) %>% 
+  pivot_wider(names_from=Candidate, values_from=Votes) %>% 
+  rename(Biden=2, Trump=3) %>% 
+  mutate(Blueness=Biden/(Biden+Trump))
+
+Covid <- read_rds(paste0(DataCovid, "Today_County_calc.rds"))
+
+out_path <-  "/home/ajackson/Dropbox/Rprojects/Covid/"
+Vaccine <- read_rds(paste0(out_path, "Vaccinations.rds")) %>% 
+  filter(County!="NULL", 
+         County!="Other", 
+         County!="*Other", 
+         County!="* Other", 
+         County!="Texas", 
+         !is.na(County),
+         County != "Federal Long-Term Care Vaccination Program",
+         County != "Federal Pharmacy Retail Vaccination Program") %>% 
+  group_by(County) %>% 
+    mutate(Pop_teen=max(Pop_teen, na.rm=TRUE)) %>% 
+  ungroup()
+
+#   Add total population to file
+
+Vaccine <- Covid %>% 
+  select(County, Population) %>% 
+  unique() %>% 
+  rename(Pop_total=Population) %>% 
+  right_join(., Vaccine, by="County")
+
+today_date <- stamp("Aug 1, 2021")(last(Vaccine$Date))
+
+```
+
