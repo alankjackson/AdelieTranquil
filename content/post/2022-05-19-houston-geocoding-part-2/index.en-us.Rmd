@@ -1,0 +1,270 @@
+---
+title: 'Houston Geocoding - Part 2'
+author: Alan Jackson
+date: '2022-05-19'
+slug: [Houston_Geocoding-Part-2]
+categories:
+  - Geocoding
+tags:
+  - Houston
+  - Mapping
+keywords:
+  - tech
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(leaflet)
+library(GeocodeHou)
+
+googlecrs <- 4326
+
+path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/CoH_Address_Points/"
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Geocoding Part 2
+
+Let's take the address for the Art Car Museum and use that as our example
+address. The first address is correct, the next 5 have a flaw in one of the
+fields.
+
+```{r initialize}
+
+#   Address for the Art Car Museum
+
+Test_data <- tribble(
+  ~ID, ~Street_num, ~Prefix, ~Street_name, ~Street_type, ~Zipcode,
+  "1",       "140",   ""   ,    "Heights",       "BLVD",  "77007",
+  "2",       "138",   ""   ,    "Heights",       "BLVD",  "77007",
+  "3",       "140",  "W"   ,    "Heights",       "BLVD",  "77007",
+  "4",       "140",   ""   ,    "Hieghts",       "BLVD",  "77007",
+  "5",       "140",   ""   ,    "Heights",         "LN",  "77007",
+  "6",       "140",   ""   ,    "Heights",       "BLVD",  "77070"
+)
+
+
+
+```
+
+###  Exact Matches
+
+The basic expected way to run the code is to first find all exact matches, and
+then use the additional tools to try to repair any failures that occurred.
+
+As can be seen, the correct address has a good match, and the Lat/Long are 
+returned. For the next five addresses, a flag noting at which stage the
+match failed is returned.
+
+The matching is fairly conservative. I assume that only one field is in error,
+and so, for example, for most repairs will restrict the attempt to the given 
+zip code, assuming that it is correct. 
+
+For the exact match, the search order for matching is:
+
+1. Zip code
+2. Street name
+3. Street type
+4. Street number
+5. Direction prefix
+
+The potential matches are subsetted with each test, and if the match fails
+at any stage, that is the failure that is returned. So, for example, the last
+address which has the wrong zip code fails with a Street Name failure, because
+there is no street name in that wrong zip code that matches, but the zip code
+itself is valid.
+
+```{r exact matches}
+
+for (i in 1:nrow(Test_data)){ # first look for exact matches
+  tmp <- match_exactly(Test_data[i,]$Street_num, 
+                       Test_data[i,]$Prefix,
+                       Test_data[i,]$Street_name,
+                       Test_data[i,]$Street_type, 
+                       Test_data[i,]$Zipcode)
+  if (tmp$Success){ #   success
+    print(paste("Success", tmp$Lat, tmp$Lon))
+  } else { #  Fail exact match
+    print(paste("Failed", tmp$Fail))
+  }
+}
+
+```
+
+### Zip Code
+
+Zip code repair entails looking for an exact address match in any other
+zip code. Given that all the other repair routines assume a correct zip code, 
+this one should be run first.
+
+The fail message for the correct address simply means that the full address
+was found in the supposedly incorrect zip code - normally you would not
+try to repair an address you already know is correct.
+
+The incorrect zip code is corrected and the lat/long is returned. 
+
+```{r zipcode}
+
+for (i in 1:nrow(Test_data)){ # first look for exact matches
+  tmp <- repair_zipcode(Test_data[i,]$Street_num, 
+                        Test_data[i,]$Prefix,
+                        Test_data[i,]$Street_name,
+                        Test_data[i,]$Street_type, 
+                        Test_data[i,]$Zipcode)
+  if (tmp$Success){ #   success
+    print(paste("Success", tmp$Lat, tmp$Lon, tmp$New_zipcode))
+  } else { #  Fail exact match
+    print(paste("Failed", tmp$Fail))
+  }
+}
+
+```
+
+### Street Name
+
+The distance to all names in the given zip code is calculated using the 
+generalized Levenshtein (edit) distance. Basically if one letter has to be 
+changed to get a match, that is a distance of one. Two letters, a distance of
+two. The distance can be specified, but the default of two is pretty safe.
+
+Certain street names are ignored, as they are too prone to error:
+
+- Names of < 4 letters
+- Names like "A STREET"
+- Names like "12TH"
+- County roads (CR 123)
+- Farm Roads (FM 123)
+
+If more than one match is found, that is also a failure case.
+
+```{r name}
+
+for (i in 1:nrow(Test_data)){ # first look for exact matches
+  tmp <- repair_name(Test_data[i,]$Street_num, 
+                        Test_data[i,]$Prefix,
+                        Test_data[i,]$Street_name,
+                        Test_data[i,]$Street_type, 
+                        Test_data[i,]$Zipcode)
+  if (tmp$Success){ #   success
+    print(paste("Success", tmp$Lat, tmp$Lon, tmp$New_name))
+  } else { #  Fail exact match
+    print(paste("Failed", tmp$Fail))
+  }
+}
+
+```
+
+### Street Type
+
+Again, a search will occur within the designated zip code, and all the street
+types for the given name and prefix will be compiled. If only a single type is
+found, then an exact match is attempted. If that succeeds then the new address
+and lat/long are returned.
+
+The street types Court and Circle (CT, CIR) are ignored, as they are too risky.
+
+
+```{r type}
+
+for (i in 1:nrow(Test_data)){ # first look for exact matches
+  tmp <- repair_type(Test_data[i,]$Street_num, 
+                        Test_data[i,]$Prefix,
+                        Test_data[i,]$Street_name,
+                        Test_data[i,]$Street_type, 
+                        Test_data[i,]$Zipcode)
+  if (tmp$Success){ #   success
+    print(paste("Success", tmp$Lat, tmp$Lon, tmp$New_type))
+  } else { #  Fail exact match
+    print(paste("Failed", tmp$Fail))
+  }
+}
+
+```
+
+### Street Number
+
+If the street number is not found, then we try to interpolate from nearby
+addresses. Which sounds simple, but is a bit tricky. What constitutes
+nearby? And given that the locations are building or plat centered, how
+should we interpolate?
+
+First we look for address numbers on the same block as the target address,
+and on the same side of the street (even or odd). If we find less than 2
+addresses, we open up the search to 3 blocks. If there are still less than 2 
+numbers, we give up. It could be argued that at this point we could ignore 
+the even odd distinction to open up more possibilities, which would work
+in some cases, but at the cost of introducing significant bias in the 
+interpolated result. More complex interpolation schemes can also be
+imagined, but it is unclear how much benefit would be gained. Google uses
+some of these to poor effect.
+
+Next we calculate delta lat/longs for pairs of addresses taken in order to
+come up with an interpolator. We then use the address nearest to the target
+to calculate the new lat/long. Finally we check the distance from the nearest 
+point to the target. If it exceeds a threshold (set by a parameter) then the
+match is rejected. The default value is 250 feet.
+
+
+```{r num}
+
+for (i in 1:nrow(Test_data)){ # first look for exact matches
+  tmp <- repair_number(Test_data[i,]$Street_num, 
+                        Test_data[i,]$Prefix,
+                        Test_data[i,]$Street_name,
+                        Test_data[i,]$Street_type, 
+                        Test_data[i,]$Zipcode)
+  if (tmp$Success){ #   success
+    print(paste("Success", tmp$Lat, tmp$Lon, tmp$Result))
+  } else { #  Fail exact match
+    print(paste("Failed", tmp$Fail))
+  }
+}
+
+```
+
+### Directional Prefix
+
+Similar to Street Type, we will search for the possible prefixes in the given 
+zip code. If only one is found, then we declare success.
+
+In the example, we are unsuccessful. Why is that? Because within the zip code
+77007, there is one, maybe two blocks of Heights Blvd south of Washington
+Ave where it becomes S. Heights Blvd, before becoming Waugh. So there is a 
+fundamentally unresolvable ambiguity if we know the prefix is wrong.
+
+```{r prefix}
+
+for (i in 1:nrow(Test_data)){ # first look for exact matches
+  tmp <- repair_prefix(Test_data[i,]$Street_num, 
+                        Test_data[i,]$Prefix,
+                        Test_data[i,]$Street_name,
+                        Test_data[i,]$Street_type, 
+                        Test_data[i,]$Zipcode)
+  if (tmp$Success){ #   success
+    print(paste("Success", tmp$Lat, tmp$Lon, tmp$New_prefix))
+  } else { #  Fail exact match
+    print(paste("Failed", tmp$Fail))
+  }
+}
+
+```
+
+### Summary
+
+I have developed an R package for geocoding within the city of Houston. In tests
+it has performed well. I feel confident that when it gives a good result, that 
+answer is quite trustworthy - much more so than Google or the Census bureau.
+
+In my tests against the city permit file, out of about 130,000 addresses, about
+122,000 were matched exactly. Of the roughly 8000 failed matches, I was able
+to repair and recover roughly half of those addresses. Of the remaining
+failures, maybe 10% were not even addresses, so impossible to recover even 
+manually. Most of the rest had multiple issues that would be difficult to
+sort out.
+
+
+
