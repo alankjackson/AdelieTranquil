@@ -66,5 +66,262 @@ Vaccine <- Covid %>%
 
 today_date <- stamp("Aug 1, 2021")(last(Vaccine$Date))
 
+Deaths <- readRDS(paste0(DataDeaths,
+                         "Texas_Deaths_Jan2018-Mar2022.rds")) %>% 
+  mutate(Year=factor(lubridate::year(Month)),
+         Year=lubridate::year(Month),
+         Date=Month,
+         Month=lubridate::month(Month, label=TRUE, abbr=TRUE)
+         ) %>% 
+  rename(County= `Residence County`) %>% 
+  mutate(County=stringr::str_remove(County, " County, TX"),
+         County=stringr::str_to_upper(County))
+
 ```
+
+
+##   play with some plots
+
+```{r plots}
+
+#   Look at year to year differences compared to 2018
+
+df <- Deaths %>% 
+  add_count(County) %>% 
+  filter(n==51) %>% 
+  filter(Year<2022) %>% 
+  pivot_wider(c(County, Month), names_from=Year, values_from = Deaths) %>% 
+  rename(y2018=`2018`, y2019=`2019`, y2020=`2020`, y2021=`2021`) %>% 
+  mutate(y2018=replace_na(y2018, 0),
+         y2019=replace_na(y2019, 0),
+         y2020=replace_na(y2020, 0),
+         y2021=replace_na(y2021, 0)) %>% 
+  mutate(Delta_1=y2019-y2018,
+         Delta_2=y2020-y2018,
+         Delta_3=y2021-y2018
+         ) %>% 
+  group_by(County) %>% 
+    summarize(n = n(),
+              D_1=mean(Delta_1, na.rm=TRUE)*12,
+              D_2=mean(Delta_2, na.rm=TRUE)*12,
+              D_3=mean(Delta_3, na.rm=TRUE)*12) %>% 
+  mutate(Total=D_2+D_3) 
+  
+Pops <- Covid %>% 
+  select(County, Population) %>% 
+  unique() %>% 
+  mutate(County=stringr::str_to_upper(County))
+
+df <- left_join(df, Pops, by="County")
+
+df <- df %>% 
+  mutate(D_1=D_1/Population,
+         D_2=D_2/Population,
+         D_3=D_3/Population,
+         Totalpercap=Total/Population)
+
+Top_9 <- df %>% 
+  arrange(-Totalpercap) %>% 
+  head(9)
+
+Deaths %>% 
+  filter(Year<2022) %>% 
+  filter(County %in% Top_9$County) %>% 
+  mutate(Year=factor(Year)) %>% 
+  ggplot(aes(x=Month, y=Deaths, group=Year, color=Year)) +
+  geom_point() +
+  geom_line(aes(x=Month)) +
+  facet_wrap(vars(County), scales="free")+
+  theme_classic()
+
+```
+
+
+##        Excess deaths
+
+
+Let's do a very simple analysis. We will look at the number of deaths, per
+county, in 2018 and 2019, and compare that to 2020 ans 2021. We will call that
+excess deaths. 
+
+```{r excess deaths}
+
+Yearly_deaths <- read_tsv(paste0(DataDeaths,
+                "Provisional Mortality Statistics, 2018-2021 by year.txt"),
+                col_types="-cccci") %>% 
+  mutate(Year=factor(`Year Code`)
+         ) %>% 
+  rename(County= `Residence County`) %>% 
+  mutate(County=stringr::str_remove(County, " County, TX"),
+         County=stringr::str_to_upper(County))
+
+Excess_deaths <-  Yearly_deaths %>% 
+  select(County, Year, Deaths) %>% 
+  drop_na() %>% 
+  add_count(County) %>% 
+  filter(n==4) %>% 
+  pivot_wider(c(County), names_from=Year, values_from=Deaths) %>% 
+  mutate(Pre_covid=(`2018`+`2019`),
+         Post_covid=(`2020`+`2021`),
+         Excess=Post_covid-Pre_covid) %>% 
+  left_join(Pops, by="County") %>% 
+  mutate(Excess_percap=Excess/Population*100000)
+
+Excess_deaths %>% 
+  ggplot(aes(x=Excess_percap)) +
+  geom_histogram() +
+  labs(title="Excess Deaths per Capita by County",
+       subtitle="2018 and 2019 compared to 2020 and 2021 (2 year total)",
+       x="Excess deaths per 100,000",
+       y="Number of counties")
+
+```
+
+##  Add in CDC Covid estimates
+
+```{r covid}
+Covid_deaths <- read_tsv(paste0(DataDeaths,
+                "Provisional Mortality Statistics, 2018-2021 covid.txt"),
+                col_types="-cccci") %>% 
+  mutate(Year=factor(`Year Code`)
+         ) %>% 
+  rename(County= `Residence County`) %>% 
+  mutate(County=stringr::str_remove(County, " County, TX"),
+         County=stringr::str_to_upper(County))
+
+Covid_deaths <- 
+Covid_deaths %>% 
+  drop_na() %>% 
+  select(County, Year, Deaths) %>% 
+  group_by(County) %>% 
+    summarize(Covid=sum(Deaths, na.rm=TRUE)) %>% 
+  left_join(Pops, by="County") %>% 
+  mutate(Covid_percap=Covid/Population*100000)
+
+Covid_deaths %>% 
+  ggplot(aes(x=Covid_percap)) +
+  geom_histogram() +
+  labs(title="Covid Deaths per Capita by County",
+       subtitle="Preliminary CDC estimates",
+       x="Excess deaths per 100,000",
+       y="Number of counties")
+
+
+```
+
+
+##  Compare CDC covid deaths and excess deaths
+
+```{r compare}
+
+foo <- left_join(Covid_deaths, Excess_deaths, by="County") %>% 
+  select(County, Covid, Covid_percap, 
+         Excess, Excess_percap, Population=Population.y) %>% 
+  mutate(Excess_minus_Covid=(Excess-Covid)/Population*100000)
+
+foo %>% 
+  ggplot(aes(x=Excess_minus_Covid))+
+  geom_histogram()+
+  labs(title="(Excess - Covid) Deaths per Capita by County",
+       x="Deaths per 100,000",
+       y="Number of counties")
+
+```
+
+
+##        Analysis of Excess vs Covid deaths
+
+```{r excess vs covid analysis}
+
+#   Covid vs. Excess
+
+foo %>% 
+  ggplot(aes(x=Excess_percap, y=Covid_percap)) +
+  geom_point()+
+  geom_smooth(method=lm)+
+  labs(title="Excess Deaths vs. Covid Deaths (per 100,000)",
+       subtitle="By County",
+       x="Excess Deaths per 100,000",
+       y="Covid Deaths per 100,000")
+
+#   County pop vs. Covid, Excess, and difference
+
+p1 <- foo %>% 
+  ggplot(aes(x=Population, y=Covid_percap))+
+  geom_point()+
+  scale_x_log10() +
+  geom_smooth(method=lm)+
+  labs(title="Covid Deaths (per 100,000) vs. Population",
+       subtitle="By County",
+       x="Population",
+       y="Covid Deaths per 100,000")
+  
+
+p2 <- foo %>% 
+  ggplot(aes(x=Population,y=Excess_percap ))+
+  geom_point()+
+  scale_x_log10()+
+  geom_smooth(method=lm)+
+  labs(title="Excess Deaths (per 100,000) vs. Population",
+       subtitle="By County",
+       x="Population",
+       y="Excess Deaths per 100,000")
+
+p3 <- foo %>% 
+  ggplot(aes(x=Population, y=Excess_minus_Covid))+
+  geom_point()+
+  scale_x_log10()+
+  geom_smooth(method=lm)+
+  labs(title="Excess - Covid Deaths (per 100,000) vs. Population",
+       subtitle="By County",
+       x="Population",
+       y="Death differences")
+
+gridExtra::grid.arrange(p1, p2, p3, nrow=3)
+
+```
+
+##  Add in politics
+
+```{r politics}
+
+By_county <- left_join(foo, Votes, by="County") %>% 
+  select(-Biden, -Trump)
+
+#   First Trauma Service Areas 
+
+inpath <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/Texas_Trauma_Service_Areas/"
+
+TSA <- readRDS(paste0(inpath, "Trauma_Service_Areas.rds"))
+
+By_TSA <- TSA %>% 
+  mutate(County=stringr::str_to_upper(County)) %>% 
+           left_join(foo, ., by="County") %>% 
+  group_by(Area_name) %>% 
+    summarize(Population=sum(Population, na.rm = TRUE),
+              Covid=sum(Covid, na.rm=TRUE),
+              Excess=sum(Excess, na.rm=TRUE)
+              ) %>% 
+  rename(TSA=Area_name)
+
+
+#   Metropolitan areas
+
+DataArchive <- "/home/ajackson/Dropbox/mirrors/ajackson/SharedData/"
+MSA_raw <- readRDS(paste0(DataArchive, "Texas_MSA_Pop_Counties.rds")) 
+
+By_MSA <- MSA_raw %>% 
+  unnest(Counties) %>% 
+  rename(County=Counties) %>% 
+  mutate(County=stringr::str_to_upper(County)) %>% 
+  left_join(foo, ., by="County") %>% 
+  select(-Population.x) %>% 
+  rename(Population=Population.y) %>% 
+  group_by(MSA) %>% 
+  summarise(Population=unique(Population),
+              Covid=sum(Covid, na.rm=TRUE),
+              Excess=sum(Excess, na.rm=TRUE))
+
+```
+
 
