@@ -297,11 +297,15 @@ TSA <- readRDS(paste0(inpath, "Trauma_Service_Areas.rds"))
 By_TSA <- TSA %>% 
   mutate(County=stringr::str_to_upper(County)) %>% 
            left_join(foo, ., by="County") %>% 
+           left_join(., Votes, by="County") %>% 
   group_by(Area_name) %>% 
     summarize(Population=sum(Population, na.rm = TRUE),
               Covid=sum(Covid, na.rm=TRUE),
-              Excess=sum(Excess, na.rm=TRUE)
+              Excess=sum(Excess, na.rm=TRUE),
+              Trump=sum(Trump, na.rm=TRUE),
+              Biden=sum(Biden, na.rm=TRUE)
               ) %>% 
+  mutate(Blueness=Biden/(Trump+Biden)) %>% 
   rename(TSA=Area_name)
 
 
@@ -315,12 +319,18 @@ By_MSA <- MSA_raw %>%
   rename(County=Counties) %>% 
   mutate(County=stringr::str_to_upper(County)) %>% 
   left_join(foo, ., by="County") %>% 
+  left_join(., Votes, by="County") %>% 
   select(-Population.x) %>% 
   rename(Population=Population.y) %>% 
   group_by(MSA) %>% 
-  summarise(Population=unique(Population),
+    summarise(Population=unique(Population),
               Covid=sum(Covid, na.rm=TRUE),
-              Excess=sum(Excess, na.rm=TRUE))
+              Excess=sum(Excess, na.rm=TRUE),
+              Trump=sum(Trump, na.rm=TRUE),
+              Biden=sum(Biden, na.rm=TRUE)
+            ) %>% 
+  mutate(Blueness=Biden/(Trump+Biden)) 
+  
 
 ```
 
