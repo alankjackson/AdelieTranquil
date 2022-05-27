@@ -16,9 +16,6 @@ keywords:
 library(tidyverse)
 library(ggplot2)
 library(lubridate)
-#library(broom)
-#library(gt)
-#library(ggrepel)
 
 #   Directory where data is stored
 
@@ -79,10 +76,24 @@ Deaths <- readRDS(paste0(DataDeaths,
 
 ```
 
+##   Covid and Politics
 
-##   play with some plots
+Let's take a look at Texas politics and Covid deaths. The CDC Wonder data
+has preliminary deaths and preliminary covid deaths, by county through April
+of 2022. We can combine this data with the votes from the presidential race
+and look for correlations.
 
-```{r plots}
+But first, I will calculate the "excess" deaths using a bog simple approach,
+I will simply assume that for each county the deaths in years 2018 and 2019
+represent a somewhat constant background, and any increase in the years 2020 
+and 2021 will be considered excess deaths likely due to Covid.
+
+In the plots, I look at the nine counties with the largest per capita excess
+between 2018 and 2021. The data is pretty noisy, especially since these are
+small counties, so the statistics are not very robust.Even so, the picture
+that emerges is pretty consistent.
+
+```{r plots, message=FALSE, warning=FALSE}
 
 #   Look at year to year differences compared to 2018
 
@@ -137,14 +148,18 @@ Deaths %>%
 ```
 
 
-##        Excess deaths
+##  Excess deaths
 
 
 Let's do a very simple analysis. We will look at the number of deaths, per
-county, in 2018 and 2019, and compare that to 2020 ans 2021. We will call that
+county, in 2018 and 2019, and compare that to 2020 and 2021. We will call that
 excess deaths. 
 
-```{r excess deaths}
+The histograms clearly shows that almost every county experienced an
+excess of deaths, most on the order of 500 per 100,000 in those two years.
+Clearly there is a strong signal here.
+
+```{r excess deaths, message=FALSE, warning=FALSE, echo=FALSE}
 
 Yearly_deaths <- read_tsv(paste0(DataDeaths,
                 "Provisional Mortality Statistics, 2018-2021 by year.txt"),
@@ -179,7 +194,15 @@ Excess_deaths %>%
 
 ##  Add in CDC Covid estimates
 
-```{r covid}
+So the CDC has preliminary numbers for Covid deaths based on death certificate
+data, although we know that in some counties (where the coroner is a JP) those
+numbers are low. One JP was quoted as saying "why would I waste a Covid test 
+on a dead person?".
+
+None the less, their data shows a rate of close to 400 per 100,000, and less
+spread than the excess death estimate. 
+
+```{r covid, message=FALSE, warning=FALSE, echo=FALSE}
 Covid_deaths <- read_tsv(paste0(DataDeaths,
                 "Provisional Mortality Statistics, 2018-2021 covid.txt"),
                 col_types="-cccci") %>% 
@@ -212,7 +235,12 @@ Covid_deaths %>%
 
 ##  Compare CDC covid deaths and excess deaths
 
-```{r compare}
+When we compare the two estimates, we find that there appears to be about
+a 150 deaths per 100,000 difference, with the excess deaths being fairly
+consistently larger than the proven Covid deaths. In light of what we know
+about the construction of death certificates, this is not surprising.
+
+```{r compare, message=FALSE, warning=FALSE, echo=FALSE}
 
 foo <- left_join(Covid_deaths, Excess_deaths, by="County") %>% 
   select(County, Covid, Covid_percap, 
@@ -231,7 +259,15 @@ foo %>%
 
 ##        Analysis of Excess vs Covid deaths
 
-```{r excess vs covid analysis}
+Excess and Covid deaths are clearly correlated, but fairly noisy. But more
+importantly, the slope of the linear fit of that correlation is only 0.3,
+which implies that not only is there a constant shift from Covid deaths to
+Excess deaths, but that the shift itself has a bias - the counties with
+the largest excess deaths are possibly under-reporting their Covid deaths.
+Or counties with the lowest excess deaths are over-reporting Covid deaths, 
+which seems unlikely. And this is not a small bias.
+
+```{r excess vs covid analysis, message=FALSE, warning=FALSE}
 
 #   Covid vs. Excess
 
@@ -239,6 +275,10 @@ foo %>%
   ggplot(aes(x=Excess_percap, y=Covid_percap)) +
   geom_point()+
   geom_smooth(method=lm)+
+  annotate("text", x=250, y=700, 
+           label=(paste0("slope==",
+                         signif(coef(lm(foo$Covid_percap~foo$Excess_percap))[2],3))),
+           parse=TRUE)+
   labs(title="Excess Deaths vs. Covid Deaths (per 100,000)",
        subtitle="By County",
        x="Excess Deaths per 100,000",
@@ -333,5 +373,110 @@ By_MSA <- MSA_raw %>%
   
 
 ```
+
+##   Let's make some plots
+
+```{r political plots}
+
+#  By County
+
+By_county %>% 
+  ggplot(aes(x=Blueness,y=Excess_percap ))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(title="Excess Deaths (per 100,000) vs. Biden percent vote",
+       subtitle="By County",
+       x="Biden Percent Vote",
+       y="Excess Deaths per 100,000")
+
+#  By MSA
+
+By_MSA %>% 
+  mutate(Excess_percap=Excess/Population*100000) %>% 
+  ggplot(aes(x=Blueness,y=Excess_percap ))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(title="Excess Deaths (per 100,000) vs. Biden percent vote",
+       subtitle="By Metropolitan Area",
+       x="Biden Percent Vote",
+       y="Excess Deaths per 100,000")
+
+#  By TSA
+
+By_TSA %>% 
+  mutate(Excess_percap=Excess/Population*100000) %>% 
+  ggplot(aes(x=Blueness,y=Excess_percap ))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  # geom_text_repel(data=subset(Vax_TSA_now, Vax_pct < 0.38 | 
+  #                         Vax_pct > 0.65 |
+  #                         Blueness > 0.55),
+  ggrepel::geom_text_repel(
+            aes(Blueness,Excess_percap,label=TSA), hjust=0,
+                nudge_x=.005) +
+  labs(title="Excess Deaths (per 100,000) vs. Biden percent vote",
+       subtitle="By Trauma Service Area",
+       x="Biden Percent Vote",
+       y="Excess Deaths per 100,000")
+
+
+#  By TSA, COVID deaths
+
+By_TSA %>% 
+  mutate(Covid_percap=Covid/Population*100000) %>% 
+  ggplot(aes(x=Blueness,y=Covid_percap ))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  ggrepel::geom_text_repel(
+            aes(Blueness,Covid_percap,label=TSA), hjust=0,
+                nudge_x=.005) +
+  labs(title="Covid Deaths (per 100,000) vs. Biden percent vote",
+       subtitle="By Trauma Service Area",
+       x="Biden Percent Vote",
+       y="Covid Deaths per 100,000")
+
+#  Trajectory from Excell to Covid
+
+By_TSA <- By_TSA %>% 
+  mutate(Covid_percap=Covid/Population*100000) %>% 
+  mutate(Excess_percap=Excess/Population*100000)
+
+Labels <- By_TSA %>% 
+  select(TSA, Blueness, Covid_percap)
+  
+TSA_longer <- By_TSA %>% 
+  select(TSA, Blueness, Covid_percap, Excess_percap) %>% 
+  pivot_longer(!c(TSA, Blueness), names_to="Names", values_to="Values")
+
+#By_TSA %>% 
+#  select(TSA, Blueness, Covid_percap, Excess_percap) %>% 
+#  pivot_longer(!c(TSA, Blueness), names_to="Names", values_to="Values") %>% 
+p <-   ggplot(data=TSA_longer, aes(x=Blueness,y=Values, color=Names ))+
+  geom_point()+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  geom_segment(data = By_TSA, 
+               aes(x = Blueness, xend = Blueness, 
+                   y = Covid_percap,  yend = Excess_percap, 
+                   group = TSA), 
+               colour = "black", 
+               arrow = arrow(length=unit(0.2, "cm"))) +
+   ggrepel::geom_text_repel(data=subset(TSA_longer, Names=="Covid_percap"),
+             mapping=aes(x=Blueness,y=Values,label=TSA), hjust=0,
+                 nudge_x=.005) +
+  labs(title="Covid and Excess Deaths (per 100,000) vs. Biden percent vote",
+       subtitle="By Trauma Service Area",
+       x="Biden Percent Vote",
+       y="Covid or Excess Deaths per 100,000")
+
+
+
+```
+
+
+
 
 
