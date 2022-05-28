@@ -227,7 +227,7 @@ Covid_deaths %>%
   geom_histogram() +
   labs(title="Covid Deaths per Capita by County",
        subtitle="Preliminary CDC estimates",
-       x="Excess deaths per 100,000",
+       x="Covid deaths per 100,000",
        y="Number of counties")
 
 
@@ -268,11 +268,6 @@ the largest excess deaths are possibly under-reporting their Covid deaths.
 Or counties with the lowest excess deaths are over-reporting Covid deaths, 
 which seems unlikely. And this is not a small bias.
 
-If we look at the difference between the Covid and Excess deaths, and plot 
-that against Excess deaths, we see the same effect, with an even better
-fit - a very tight point cloud. As the proportion - these are deaths per
-capita - grows, the disparity between covid deaths and excess deaths grows.
-
 Places with the most deaths have the greatest under reporting of covid deaths.
 
 Finally, counties with higher populations show fewer excess and fewer covid
@@ -293,20 +288,6 @@ foo %>%
        subtitle="By County",
        x="Excess Deaths per 100,000",
        y="Covid Deaths per 100,000")
-
-#   Difference vs. Covid
-
-foo %>% 
-  ggplot(aes(x=Covid_percap, y=Excess_minus_Covid)) +
-  geom_point()+
-  geom_smooth(method=lm)+
-  annotate("text", x=200, y=500, 
-           label=(paste0("slope==",                      signif(coef(lm(foo$Excess_minus_Covid~foo$Covid_percap))[2],3))),
-           parse=TRUE)+
-  labs(title="Covid Deaths vs. Difference (Excess-Covid) (per 100,000)",
-       subtitle="By County",
-       x="Covid Deaths per 100,000",
-       y="Excess - Covid Deaths per 100,000")
 
 #   County pop vs. Covid, Excess, and difference
 
@@ -496,10 +477,204 @@ ggplot(data=TSA_longer, aes(x=Blueness,y=Values, color=Names ))+
 
 Let's take a quick look at just the year 2021, the post-vaccine year.
 
+Covid deaths versus excess deaths is similar to before, but with a tighter
+distribution. Excess deaths versus "blueness" is also similar, with a clear
+trend for red counties to show a higher death rate. Not surprisingly, the
+number of vaccine doses per capita shows the same red/blue trend, though
+the data is pretty noisy. Not that apparently no one has very good information
+on how many people are vaxed with one, two, three, or four doses, or indeed are
+unvaxed. The number of doses given is pretty reliable, we just don't know whose
+arm they went in. So I just show the total doses given per capita. If we were
+fully vaxed that number should be around 3, accounting for both second boosters
+and the unvaccinated status of under 5 year-olds.
+
+Consolidating the data into the Trauma Service Areas, we see first of all that
+the discrepancy between Covid deaths and excess deaths is reduced, but still
+present. If they matched, the slope of the fit line would be one.
+
+We still have a strong political bias in the excess death rate, as well as in
+the vaccination rate. Note that some of the vaccine doses used at the border may
+have been people coming from Mexico, although given the early horrors with
+Covid along the border, they might also just be a local response to that
+tragedy.
+
 ```{r post vaccine, message=FALSE, warning=FALSE }
+
+Covid_deaths <- read_tsv(paste0(DataDeaths,
+                "Provisional Mortality Statistics, 2018-2021 covid.txt"),
+                col_types="-cccci") %>% 
+  mutate(Year=factor(`Year Code`)
+         ) %>% 
+  rename(County= `Residence County`) %>% 
+  mutate(County=stringr::str_remove(County, " County, TX"),
+         County=stringr::str_to_upper(County))
+
+Covid_deaths <- 
+Covid_deaths %>% 
+  drop_na() %>% 
+  select(County, Year, Deaths) %>% 
+  filter(Year=="2021") %>% 
+  group_by(County) %>% 
+    summarize(Covid=sum(Deaths, na.rm=TRUE)) %>% 
+  left_join(Pops, by="County") %>% 
+  mutate(Covid_percap=Covid/Population*100000)
+
+Excess_deaths <- Excess_deaths %>% 
+  mutate(Excess_2021=`2021`-Pre_covid/2,
+         Excess_2021_percap=Excess_2021/Population*100000)
+
+foo <- left_join(Covid_deaths, Excess_deaths, by="County") %>% 
+  select(County, Covid, Covid_percap, 
+         Excess_2021, Excess_2021_percap, Population=Population.y) %>% 
+  mutate(Excess_minus_Covid=(Excess_2021-Covid)/Population*100000)
+
+#   Covid vs. Excess
+
+foo %>% 
+  ggplot(aes(x=Excess_2021_percap, y=Covid_percap)) +
+  geom_point()+
+  geom_smooth(method=lm)+
+  annotate("text", x=250, y=400, 
+           label=(paste0("slope==",                      signif(coef(lm(foo$Covid_percap~foo$Excess_2021_percap))[2],3))),
+           parse=TRUE)+
+  labs(title="Excess Deaths vs. Covid Deaths Post-Vax (per 100,000)",
+       subtitle="By County for 2021 only",
+       x="Excess Deaths per 100,000",
+       y="Covid Deaths per 100,000")
+
+#   Add in votes and vaccinations rates
+
+Vax <- Vaccine %>% 
+  mutate(County=stringr::str_to_upper(County)) %>% 
+  mutate(Doses_percap=Doses_admin/Pop_total) %>% 
+  select(County, Doses_percap, Doses_admin) %>% 
+  group_by(County) %>% 
+    summarise(Doses_percap=last(Doses_percap),
+              Doses_admin=last(Doses_admin))
+
+foo <- foo %>% 
+  left_join(., Votes, by="County") %>% 
+  left_join(., Vax, by="County")
+
+#   By county Deaths vs. Blueness
+
+foo %>% 
+  ggplot(aes(x=Blueness,y=Excess_2021_percap ))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  annotate("text", x=.4, y=600, 
+           label=(paste0("slope==",                      signif(coef(lm(foo$Excess_2021_percap~foo$Blueness))[2],3))),
+           parse=TRUE)+
+  labs(title="Excess Deaths in 2021 (per 100,000) vs. Biden percent vote",
+       subtitle="By County",
+       x="Biden Percent Vote",
+       y="Excess Deaths per 100,000")
+
+#   By county Deaths vs. Vaccine
+
+foo %>% 
+  filter(!stringr::str_detect(County, "BROOKS")) %>% 
+  ggplot(aes(x=Doses_percap,y=Excess_2021_percap ))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  #scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  annotate("text", x=2, y=600, 
+           label=(paste0("slope==",                      signif(coef(lm(foo$Excess_2021_percap~foo$Doses_percap))[2],3))),
+           parse=TRUE)+
+  labs(title="Excess Deaths in 2021 (per 100,000) vs. Vaccine Doses per capita",
+       subtitle="By County (Brooks county dropped with 5x coverage)",
+       x="Vaccine Doses per capita",
+       y="Excess Deaths per 100,000")
+
+#  By TSA
+
+By_TSA <- TSA %>% 
+  mutate(County=stringr::str_to_upper(County)) %>% 
+  left_join(foo, ., by="County") %>% 
+  group_by(Area_name) %>% 
+    summarize(Population=sum(Population, na.rm = TRUE),
+              Covid=sum(Covid, na.rm=TRUE),
+              Excess=sum(Excess_2021, na.rm=TRUE),
+              Trump=sum(Trump, na.rm=TRUE),
+              Biden=sum(Biden, na.rm=TRUE),
+              Doses_admin=sum(Doses_admin, na.rm=TRUE)
+              ) %>% 
+  mutate(Blueness=Biden/(Trump+Biden)) %>% 
+  mutate(Excess_percap=Excess/Population*100000) %>% 
+  mutate(Covid_percap=Covid/Population*100000) %>% 
+  mutate(Doses_percap=Doses_admin/Population) %>% 
+  rename(TSA=Area_name)
+
+#   Covid vs. Excess
+
+By_TSA %>% 
+  ggplot(aes(x=Excess_percap, y=Covid_percap)) +
+  geom_point()+
+  geom_smooth(method=lm)+
+  annotate("text", x=200, y=275, 
+           label=(paste0("slope==",                      signif(coef(lm(By_TSA$Covid_percap~By_TSA$Excess_percap))[2],3))),
+           parse=TRUE)+
+  ggrepel::geom_text_repel(
+            aes(Excess_percap,Covid_percap,label=TSA), hjust=0,
+                nudge_x=.005) +
+  labs(title="Excess Deaths vs. Covid Deaths Post-Vax (per 100,000)",
+       subtitle="By TSA for 2021 only",
+       x="Excess Deaths per 100,000",
+       y="Covid Deaths per 100,000")
+
+By_TSA %>% 
+  ggplot(aes(x=Blueness,y=Excess_percap ))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  annotate("text", x=.5, y=400, 
+           label=(paste0("slope==",                      signif(coef(lm(By_TSA$Excess_percap~By_TSA$Blueness))[2],3))),
+           parse=TRUE)+
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  ggrepel::geom_text_repel(
+            aes(Blueness,Excess_percap,label=TSA), hjust=0,
+                nudge_x=.005) +
+  labs(title="Excess Deaths for 2021 (per 100,000) vs. Biden percent vote",
+       subtitle="By Trauma Service Area",
+       x="Biden Percent Vote",
+       y="Excess Deaths per 100,000 in 2021")
+
+
+#  By TSA, Vax rates and deaths
+
+By_TSA %>% 
+  ggplot(aes(x=Doses_percap,y=Excess_percap ))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  annotate("text", x=2, y=400, 
+           label=(paste0("slope==",                      signif(coef(lm(By_TSA$Excess_percap~By_TSA$Doses_percap))[2],3))),
+           parse=TRUE)+
+  #scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  ggrepel::geom_text_repel(
+            aes(Doses_percap,Excess_percap,label=TSA), hjust=0,
+                nudge_x=.005) +
+  labs(title="Excess Deaths in 2021 (per 100,000) vs. Vaccine Doses per capita",
+       subtitle="By Trauma Service Area",
+       x="Vaccine Doses per capita",
+       y="Excess Deaths in 2021 per 100,000")
+
+
+
 
 ```
 
 
+##  Conclusions
+
+A simple-minded model for determining the number of excess deaths during the 
+time of Covid seems to show that the number of those deaths is quite a bit 
+higher than the preliminary estimates of Covid deaths that the CDC has derived
+from looking at Death Certificates. This is not surprising since most county
+coroners are essentially untrained JP's. 
+
+More disturbing are the clear correlations between political party, vaccination
+rates, and excess deaths. This points to a basic social and political issue
+that has caused the needless loss of many lives, and will likely haunt us for
+many years to come.
 
 
