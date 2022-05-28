@@ -1,5 +1,5 @@
 ---
-title: Texas Deaths by County
+title: Texas Covid Deaths by County
 author: Alan Jackson
 date: '2022-05-22'
 slug: '[texas_deaths_by_county]'
@@ -142,6 +142,7 @@ Deaths %>%
   ggplot(aes(x=Month, y=Deaths, group=Year, color=Year)) +
   geom_point() +
   geom_line(aes(x=Month)) +
+  scale_x_discrete(breaks = c("Jan", "Apr", "Jul", "Oct"))+
   facet_wrap(vars(County), scales="free")+
   theme_classic()
 
@@ -267,6 +268,16 @@ the largest excess deaths are possibly under-reporting their Covid deaths.
 Or counties with the lowest excess deaths are over-reporting Covid deaths, 
 which seems unlikely. And this is not a small bias.
 
+If we look at the difference between the Covid and Excess deaths, and plot 
+that against Excess deaths, we see the same effect, with an even better
+fit - a very tight point cloud. As the proportion - these are deaths per
+capita - grows, the disparity between covid deaths and excess deaths grows.
+
+Places with the most deaths have the greatest under reporting of covid deaths.
+
+Finally, counties with higher populations show fewer excess and fewer covid
+deaths, as well as a smaller disparity between the two.
+
 ```{r excess vs covid analysis, message=FALSE, warning=FALSE}
 
 #   Covid vs. Excess
@@ -276,13 +287,26 @@ foo %>%
   geom_point()+
   geom_smooth(method=lm)+
   annotate("text", x=250, y=700, 
-           label=(paste0("slope==",
-                         signif(coef(lm(foo$Covid_percap~foo$Excess_percap))[2],3))),
+           label=(paste0("slope==",                      signif(coef(lm(foo$Covid_percap~foo$Excess_percap))[2],3))),
            parse=TRUE)+
   labs(title="Excess Deaths vs. Covid Deaths (per 100,000)",
        subtitle="By County",
        x="Excess Deaths per 100,000",
        y="Covid Deaths per 100,000")
+
+#   Difference vs. Covid
+
+foo %>% 
+  ggplot(aes(x=Covid_percap, y=Excess_minus_Covid)) +
+  geom_point()+
+  geom_smooth(method=lm)+
+  annotate("text", x=200, y=500, 
+           label=(paste0("slope==",                      signif(coef(lm(foo$Excess_minus_Covid~foo$Covid_percap))[2],3))),
+           parse=TRUE)+
+  labs(title="Covid Deaths vs. Difference (Excess-Covid) (per 100,000)",
+       subtitle="By County",
+       x="Covid Deaths per 100,000",
+       y="Excess - Covid Deaths per 100,000")
 
 #   County pop vs. Covid, Excess, and difference
 
@@ -294,7 +318,7 @@ p1 <- foo %>%
   labs(title="Covid Deaths (per 100,000) vs. Population",
        subtitle="By County",
        x="Population",
-       y="Covid Deaths per 100,000")
+       y="Covid Deaths")
   
 
 p2 <- foo %>% 
@@ -305,7 +329,7 @@ p2 <- foo %>%
   labs(title="Excess Deaths (per 100,000) vs. Population",
        subtitle="By County",
        x="Population",
-       y="Excess Deaths per 100,000")
+       y="Excess Deaths")
 
 p3 <- foo %>% 
   ggplot(aes(x=Population, y=Excess_minus_Covid))+
@@ -321,9 +345,14 @@ gridExtra::grid.arrange(p1, p2, p3, nrow=3)
 
 ```
 
-##  Add in politics
+##  Data consolidation and politics
 
-```{r politics}
+Since there is a huge disparity in county population, which causes a lot of 
+noise in the data, we will consolidate into 
+Trauma Service Areas (TSA's). And we will add the votes for Trump and
+Biden as well.
+
+```{r politics, message=FALSE, warning=FALSE}
 
 By_county <- left_join(foo, Votes, by="County") %>% 
   select(-Biden, -Trump)
@@ -346,37 +375,35 @@ By_TSA <- TSA %>%
               Biden=sum(Biden, na.rm=TRUE)
               ) %>% 
   mutate(Blueness=Biden/(Trump+Biden)) %>% 
+  mutate(Excess_percap=Excess/Population*100000) %>% 
+  mutate(Covid_percap=Covid/Population*100000) %>% 
   rename(TSA=Area_name)
-
-
-#   Metropolitan areas
-
-DataArchive <- "/home/ajackson/Dropbox/mirrors/ajackson/SharedData/"
-MSA_raw <- readRDS(paste0(DataArchive, "Texas_MSA_Pop_Counties.rds")) 
-
-By_MSA <- MSA_raw %>% 
-  unnest(Counties) %>% 
-  rename(County=Counties) %>% 
-  mutate(County=stringr::str_to_upper(County)) %>% 
-  left_join(foo, ., by="County") %>% 
-  left_join(., Votes, by="County") %>% 
-  select(-Population.x) %>% 
-  rename(Population=Population.y) %>% 
-  group_by(MSA) %>% 
-    summarise(Population=unique(Population),
-              Covid=sum(Covid, na.rm=TRUE),
-              Excess=sum(Excess, na.rm=TRUE),
-              Trump=sum(Trump, na.rm=TRUE),
-              Biden=sum(Biden, na.rm=TRUE)
-            ) %>% 
-  mutate(Blueness=Biden/(Trump+Biden)) 
-  
 
 ```
 
-##   Let's make some plots
+##   Correlation with politics
 
-```{r political plots}
+By county, we see that the more Republican counties have more excess deaths
+per 100,000, and are also noisier - a consequence of them being much smaller
+than the bluer counties. To a large degree, population correlates with
+blueness.
+
+If we consolidate into the Trauma Service Areas, the slope of the fit line
+is the same, and we can now more clearly see the different areas and the
+rather strong correlation. Some of the exceptions are the valley, where the
+death toll was terrible before vaccines became available. 
+
+If we look at the preliminary covid death numbers, the story stays the same,
+at least qualitatively. There are a few changes, but nothing radical. The
+main change is that the slope is lower - we are still seeing a bias in the
+difference between excess and covid deaths, this time correlated with how
+blue an area is.
+
+Finally we can look at the differences between covid and excess deaths by
+TSA, and get a sense of how the red areas tend to have a greater difference
+between those two measures.
+
+```{r political plots, message=FALSE, warning=FALSE}
 
 #  By County
 
@@ -385,35 +412,25 @@ By_county %>%
   geom_point()+
   geom_smooth(method=lm)+
   scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  annotate("text", x=.5, y=1250, 
+           label=(paste0("slope==",                      signif(coef(lm(By_county$Excess_percap~By_county$Blueness))[2],3))),
+           parse=TRUE)+
   labs(title="Excess Deaths (per 100,000) vs. Biden percent vote",
        subtitle="By County",
        x="Biden Percent Vote",
        y="Excess Deaths per 100,000")
 
-#  By MSA
-
-By_MSA %>% 
-  mutate(Excess_percap=Excess/Population*100000) %>% 
-  ggplot(aes(x=Blueness,y=Excess_percap ))+
-  geom_point()+
-  geom_smooth(method=lm)+
-  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
-  labs(title="Excess Deaths (per 100,000) vs. Biden percent vote",
-       subtitle="By Metropolitan Area",
-       x="Biden Percent Vote",
-       y="Excess Deaths per 100,000")
 
 #  By TSA
 
 By_TSA %>% 
-  mutate(Excess_percap=Excess/Population*100000) %>% 
   ggplot(aes(x=Blueness,y=Excess_percap ))+
   geom_point()+
   geom_smooth(method=lm)+
+  annotate("text", x=.5, y=650, 
+           label=(paste0("slope==",                      signif(coef(lm(By_TSA$Excess_percap~By_TSA$Blueness))[2],3))),
+           parse=TRUE)+
   scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
-  # geom_text_repel(data=subset(Vax_TSA_now, Vax_pct < 0.38 | 
-  #                         Vax_pct > 0.65 |
-  #                         Blueness > 0.55),
   ggrepel::geom_text_repel(
             aes(Blueness,Excess_percap,label=TSA), hjust=0,
                 nudge_x=.005) +
@@ -426,10 +443,12 @@ By_TSA %>%
 #  By TSA, COVID deaths
 
 By_TSA %>% 
-  mutate(Covid_percap=Covid/Population*100000) %>% 
   ggplot(aes(x=Blueness,y=Covid_percap ))+
   geom_point()+
   geom_smooth(method=lm)+
+  annotate("text", x=.5, y=450, 
+           label=(paste0("slope==",                      signif(coef(lm(By_TSA$Covid_percap~By_TSA$Blueness))[2],3))),
+           parse=TRUE)+
   scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
   ggrepel::geom_text_repel(
             aes(Blueness,Covid_percap,label=TSA), hjust=0,
@@ -439,7 +458,7 @@ By_TSA %>%
        x="Biden Percent Vote",
        y="Covid Deaths per 100,000")
 
-#  Trajectory from Excell to Covid
+#  Trajectory from Excess to Covid
 
 By_TSA <- By_TSA %>% 
   mutate(Covid_percap=Covid/Population*100000) %>% 
@@ -452,10 +471,7 @@ TSA_longer <- By_TSA %>%
   select(TSA, Blueness, Covid_percap, Excess_percap) %>% 
   pivot_longer(!c(TSA, Blueness), names_to="Names", values_to="Values")
 
-#By_TSA %>% 
-#  select(TSA, Blueness, Covid_percap, Excess_percap) %>% 
-#  pivot_longer(!c(TSA, Blueness), names_to="Names", values_to="Values") %>% 
-p <-   ggplot(data=TSA_longer, aes(x=Blueness,y=Values, color=Names ))+
+ggplot(data=TSA_longer, aes(x=Blueness,y=Values, color=Names ))+
   geom_point()+
   scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
   geom_segment(data = By_TSA, 
@@ -476,6 +492,13 @@ p <-   ggplot(data=TSA_longer, aes(x=Blueness,y=Values, color=Names ))+
 
 ```
 
+## Post vaccine
+
+Let's take a quick look at just the year 2021, the post-vaccine year.
+
+```{r post vaccine, message=FALSE, warning=FALSE }
+
+```
 
 
 
