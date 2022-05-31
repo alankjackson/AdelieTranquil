@@ -1,0 +1,98 @@
+---
+title: Tiptoe Through the Houston Fire Department Data
+author: Alan Jackson
+date: '2022-05-28'
+slug: '[tiptoe_through_HFD_data]'
+categories:
+  - Emergency
+tags:
+  - Houston
+  - Mapping
+keywords:
+  - tech
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(stringr)
+
+path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/HFD_Incidents/"
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##    read in the extant files
+
+Read in the files that have been downloaded so far
+
+```{r read in, message=FALSE, warning=FALSE}
+
+filenames <- list.files(path = paste0(path, "Incrementals/"),
+                        pattern="*_table.rds$")
+
+filenames <- paste0(paste0(path, "Incrementals/"),filenames)
+
+df <- filenames %>% 
+  purrr::map_dfr(readRDS) %>% 
+  unique() # get rid of duplicates
+
+df <- df %>% 
+  rename(Incident_type=`Incident Type`, 
+         Cross_street=`Cross Street`,
+         Call_time=`Call Time(Opened)`,
+         Combined=`Combined Response`)
+
+df <- df %>% 
+  mutate(Incident_type=stringr::str_replace(Incident_type, "fire", "Fire")) %>% 
+  mutate(Incident_type=stringr::str_replace(Incident_type, "FIRE", "Fire")) %>% 
+  mutate(Incident_type=stringr::str_replace(Incident_type, "EVENT", "Event")) %>% 
+  mutate(Incident_type=stringr::str_replace(Incident_type, "Ems", "EMS")) %>% 
+  mutate(Incident_type=stringr::str_replace(Incident_type, "Leaking", "Leak")) %>% 
+  mutate(Incident_type=stringr::str_replace(Incident_type, " on ", " "))  
+  
+
+```
+
+
+```{r summary of types, message=FALSE, warning=FALSE}
+
+df_summary <- df %>% 
+  group_by(Incident_type) %>% 
+    summarize(n=n())
+
+df <- df %>% 
+  mutate(Category=case_when(
+    str_detect(Incident_type, "Fire") ~ "Fire",
+    str_detect(Incident_type, "EMS") ~ "EMS",
+    str_detect(Incident_type, "Check Patient") ~ "Check Patient",
+    str_detect(Incident_type, "CRASH") ~ "Crash",
+    str_detect(Incident_type, "TRAFFIC") ~ "Crash",
+    str_detect(Incident_type, "Vehicle") ~ "Crash",
+    str_detect(Incident_type, "Motorcycle") ~ "Crash",
+    str_detect(Incident_type, "Gas") ~ "Gas Leak",
+    str_detect(Incident_type, "Alarm") ~ "Alarm",
+    str_detect(Incident_type, "Smoke Detector") ~ "Alarm",
+    str_detect(Incident_type, "Pedestrian") ~ "Pedestrian",
+    str_detect(Incident_type, "Arcing") ~ "Electrical",
+    str_detect(Incident_type, "Transformer") ~ "Electrical",
+    str_detect(Incident_type, "Wire") ~ "Electrical",
+    str_detect(Incident_type, "Electrical") ~ "Electrical",
+    str_detect(Incident_type, "Elevator") ~ "Elevator",
+    TRUE ~ "Other"
+  ))
+
+df %>% 
+  group_by(Category) %>% 
+    summarize(n=n()) %>% 
+  arrange(-n) %>% 
+  gt::gt()
+
+```
+
+
+
+
+
+
+
+
