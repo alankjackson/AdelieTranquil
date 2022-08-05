@@ -1,0 +1,26 @@
+---
+title: Making Maps in R
+author: Alan Jackson
+date: '2022-08-05'
+slug: '[making_maps_in_r]'
+categories:
+  - Mapping
+tags:
+  - Mapping
+keywords:
+  - tech
+comments: no
+showMeta: no
+showActions: no
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(sf)
+library(leaflet)
+library(leaflet.extras)
+
+path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/HFD_Incidents/"
+
+knitr::opts_chunk$set(echo = TRUE)
+```
