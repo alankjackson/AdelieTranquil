@@ -15,6 +15,9 @@ keywords:
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(stringr)
+library(sf)
+library(leaflet)
+library(leaflet.extras)
 
 path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/HFD_Incidents/"
 
@@ -40,7 +43,8 @@ df <- df %>%
   rename(Incident_type=`Incident Type`, 
          Cross_street=`Cross Street`,
          Call_time=`Call Time(Opened)`,
-         Combined=`Combined Response`)
+         Combined=`Combined Response`,
+         Key=`Key Map`)
 
 df <- df %>% 
   mutate(Incident_type=stringr::str_replace(Incident_type, "fire", "Fire")) %>% 
@@ -87,9 +91,76 @@ df %>%
   arrange(-n) %>% 
   gt::gt()
 
+df_sum <- df %>%
+  group_by(Key) %>% 
+    summarize(num=n())
+
+```
+
+```{r coordinates}
+
+Keyfiles <- readRDS(paste0("/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/Keymaps/", "Trans_Tab.rds"))
+
+dfnew <- left_join(df, Keyfiles, by="Key")
+dfnew <- sf::st_as_sf(dfnew)
+
+dfnew_sum <- left_join(df_sum, Keyfiles, by="Key")
+dfnew_sum <- sf::st_as_sf(dfnew_sum)
+
+```
+
+##    Let's make some maps
+
+```{r maps}
+
+
+dfnew %>%
+  leaflet() %>% 
+  addTiles() %>% 
+  addMarkers(clusterOptions = markerClusterOptions(),
+             label=~as.character(Key))
+
+dfnew %>%
+  filter(str_detect(Incident_type, "Dumpster")) %>% 
+  leaflet() %>% 
+  addTiles() %>% 
+  addMarkers(clusterOptions = markerClusterOptions())
+
+dfnew %>%
+  filter(str_detect(Incident_type, "CRASH")) %>% 
+  leaflet() %>% 
+  addTiles() %>% 
+  addMarkers(clusterOptions = markerClusterOptions(),
+             label=~as.character(Key))
+
+dfnew %>%
+  filter(str_detect(Incident_type, "Fire")) %>% 
+  leaflet() %>% 
+  addTiles() %>% 
+  addMarkers(clusterOptions = markerClusterOptions(),
+             label=~as.character(Key))
+
 ```
 
 
+##   Heat maps
+
+```{r heat}
+
+#   Create a grid
+
+##KernSmooth::bkde2D(dfnew, c(0.0005, 0.0005), gridsize=c(100,100))
+
+dfnew_sum %>%
+  #filter(str_detect(Incident_type, "Fire")) %>% 
+  filter(!is.na(Num)) %>% 
+  filter(Num>100) %>% 
+  leaflet() %>% 
+  addTiles() %>% 
+  addHeatmap(intensity=~Num,max=1000,cellSize=0.01, radius=100,blur=15)
+#  addHeatmap(lng=~Long,lat=~Lat,intensity=~Trend,max=100,radius=20,blur=10)
+
+```
 
 
 
