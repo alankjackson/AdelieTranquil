@@ -24,3 +24,95 @@ path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/HFD_Incidents/"
 
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
+##  Notes on how to make maps in R
+
+I'm especially interesting in gridding and contouring, which are always a struggle in R. Plus there seems to be a lot of churn, a lot of failed and incomplete attempts to create an environment for mapping. So Google often returns things that are better not used.
+
+First we will create a test dataset of point data. Note that this also involves paying attention to geodetics.
+
+```{r make test data}
+
+#  Load some building permit data for Houston and select out solar panels
+
+df <- readRDS('/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/Houston_Permits/Clean_Final_1989_2019.rds') %>% 
+  filter(stringr::str_detect(Comments, "SOLAR")) %>% 
+  select(Zipcode, Lat, Lon) %>% 
+  filter(!is.na(Lat)) %>% 
+  filter(Lat>1)
+
+#  Make it an sf file
+
+googlecrs <- 4326
+df_sf <- st_as_sf(df, coords=c("Lon", "Lat"), crs=googlecrs, agr = "identity")
+
+```
+
+##      Make some simple plots of the points.
+
+Let's plot two ways, an interactive plot with Leaflet, and a static plot with
+
+There are two fundamental parts to any map. The basemap, and the data. I like 
+Open Street Maps, so will using that.
+
+```{r point maps}
+
+#   First we plot maps with ggplot, or the wrapper OpenStreetMap
+
+library(ggsn) # for scale bars and north arrows
+
+df_sf %>% ggplot() + 
+  geom_sf()
+
+#   But we need a basemap
+
+Bounding_box <- osmdata::getbb(place_name="Houston, Texas, USA")
+
+Basemap <- OpenStreetMap::openmap(c(Bounding_box[,1][[2]],
+                                    Bounding_box[,1][[1]]),
+                                  c(Bounding_box[,2][[2]],
+                                    Bounding_box[,2][[1]]),
+                                  type="osm")
+Basemap2 <- OpenStreetMap::openproj(Basemap)
+
+OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
+  geom_point(data=df, aes(x=Lon, y=Lat))
+
+#   Heat map
+
+#   Lay down basemap
+OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
+  #   Add points
+  geom_point(data=df, aes(x=Lon, y=Lat)) +
+  #   Create filled density "contours" - the as.numeric converts from factor for
+  #   the scale_fill_gradient command.
+  stat_density_2d_filled(data=df, 
+                         alpha = 0.4, 
+                         binwidth=2.0,
+                         aes(x=Lon, y=Lat, 
+                             fill=as.numeric(..level..))) +
+  #   Add actual contour lines
+  stat_density_2d(data=df, 
+                  alpha = 0.8, 
+                  contour=TRUE,
+                  aes(x=Lon, y=Lat )) +
+  #   Twiddle the color scale
+  scale_fill_gradient2("Solar Panels\nper 4 sq-km", 
+                       low = "white", 
+                       mid = "yellow", 
+                       high = "red", 
+                       limits=c(2,10),
+                       midpoint =  5) +
+  #   Add a scale bar
+  scalebar(df_sf, dist = 2, dist_unit = "km", location="bottomleft",
+             transform = TRUE, model = "WGS84")
+
+
+```
+
+
+
+
+
+
+
