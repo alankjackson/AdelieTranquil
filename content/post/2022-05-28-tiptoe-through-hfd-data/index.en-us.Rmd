@@ -150,6 +150,19 @@ dfnew %>%
 #   Create a grid
 
 ##KernSmooth::bkde2D(dfnew, c(0.0005, 0.0005), gridsize=c(100,100))
+foo_sf <- dfnew_sum %>% 
+  filter(!is.na(Num)) %>% 
+  select(Num)
+
+foo <- stars::st_rasterize(foo_sf)
+plot(foo)
+
+dfnew_sum %>% 
+  filter(!is.na(Num)) %>% 
+  filter(Num>100) %>% 
+  ggplot(aes())
+  stat_contour()
+  
 
 dfnew_sum %>%
   #filter(str_detect(Incident_type, "Fire")) %>% 
