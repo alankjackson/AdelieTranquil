@@ -51,6 +51,7 @@ df_sf <- st_as_sf(df, coords=c("Lon", "Lat"), crs=googlecrs, agr = "identity")
 ##      Make some simple plots of the points.
 
 Let's plot two ways, an interactive plot with Leaflet, and a static plot with
+ggplot, and also use tmap.
 
 There are two fundamental parts to any map. The basemap, and the data. I like 
 Open Street Maps, so will using that.
@@ -105,7 +106,16 @@ OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
                        midpoint =  5) +
   #   Add a scale bar
   scalebar(df_sf, dist = 2, dist_unit = "km", location="bottomleft",
-             transform = TRUE, model = "WGS84")
+             transform = TRUE, model = "WGS84") +
+  #   Add title
+  ggtitle("Number of Solar Panels per 4 sq-km") +
+  #   Remove lat/long tics as unnecessary
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank()
+        ) +
+  labs(x="", y="")
 
 
 ```
