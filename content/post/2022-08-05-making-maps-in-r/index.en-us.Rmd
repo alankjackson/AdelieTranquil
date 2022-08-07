@@ -25,7 +25,7 @@ path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/HFD_Incidents/"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-##  Notes on how to make maps in R
+##  Notes on how to make contour and chloropleth maps in R
 
 I'm especially interesting in gridding and contouring, which are always a struggle in R. Plus there seems to be a lot of churn, a lot of failed and incomplete attempts to create an environment for mapping. So Google often returns things that are better not used.
 
@@ -56,7 +56,7 @@ ggplot, and also use tmap.
 There are two fundamental parts to any map. The basemap, and the data. I like 
 Open Street Maps, so will using that.
 
-```{r point maps}
+```{r point maps in ggplot}
 
 #   First we plot maps with ggplot, or the wrapper OpenStreetMap
 
@@ -89,27 +89,29 @@ OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
   #   the scale_fill_gradient command.
   stat_density_2d_filled(data=df, 
                          alpha = 0.4, 
-                         binwidth=2.0,
+                         #binwidth=2.0,
+                         binwidth=1.60934,
                          aes(x=Lon, y=Lat, 
                              fill=as.numeric(..level..))) +
   #   Add actual contour lines
   stat_density_2d(data=df, 
                   alpha = 0.8, 
+                  binwidth=1.60934,
                   contour=TRUE,
                   aes(x=Lon, y=Lat )) +
   #   Twiddle the color scale
-  scale_fill_gradient2("Solar Panels\nper 4 sq-km", 
+  scale_fill_gradient2("Solar Panels\nper sq-mi", 
                        low = "white", 
                        mid = "yellow", 
                        high = "red", 
-                       limits=c(2,10),
+                       limits=c(2,12),
                        midpoint =  5) +
   #   Add a scale bar
-  scalebar(df_sf, dist = 2, dist_unit = "km", location="bottomleft",
+  scalebar(df_sf, dist = 2, dist_unit = "mi", location="bottomleft",
              transform = TRUE, model = "WGS84") +
   #   Add title
-  ggtitle("Number of Solar Panels per 4 sq-km") +
-  #   Remove lat/long tics as unnecessary
+  ggtitle("Number of Solar Panels per sq-mi") +
+  #   Remove lat/long tics and labels as unnecessary
   theme(axis.text.x = element_blank(),
         axis.text.y = element_blank(),
         axis.ticks.x = element_blank(),
