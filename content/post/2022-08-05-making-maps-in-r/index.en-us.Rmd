@@ -1,5 +1,5 @@
 ---
-title: Making Maps in R
+title: Making Contour Maps in R
 author: Alan Jackson
 date: '2022-08-05'
 slug: '[making_maps_in_r]'
@@ -20,35 +20,150 @@ library(sf)
 library(leaflet)
 library(leaflet.extras)
 
-path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/HFD_Incidents/"
-
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-##  Notes on how to make contour and chloropleth maps in R
+##  Notes on how to make contour maps in R
 
-I'm especially interesting in gridding and contouring, which are always a struggle in R. Plus there seems to be a lot of churn, a lot of failed and incomplete attempts to create an environment for mapping. So Google often returns things that are better not used.
+As a retired Geophysicist, I spent a career making contour maps. I have found
+it to be challenging to make good contour maps in R, and so as part of my
+own learning process, I have documented the necessary steps in hopes that
+this may help others involved in the same struggles.
 
-First we will create a test dataset of point data. Note that this also involves paying attention to geodetics.
+Ultimately I want to create filled contours that represent a surface, based on
+some random collection of input points, and display those contours on top of
+a detailed basemap, such as OpenStreet map.
+
+I will try to use what I believe are the most recent and most likely to
+survive packages wherever possible. Both static and interactive maps will be 
+generated.
+
+Note that there are several challenges that may this a somewhat difficult 
+exercise.
+
+First of all, this area of R has undergone and continues to see a fair bit
+of churn. There are a number of packages that address parts of this problem,
+and they tend to overlap with each other.
+
+Secondly, there is a basic issue of coordinate systems. I will make maps in
+both geographic (that is, Lat-Long) coordinates and in projected (X-Y)
+coordinates. 
+
+Third, interpolating points to a grid is partly art and partly science, so I
+will give a bit of guidance there.
+
+My test data (seen below) consists of rainfall points in the Houston area
+from a selection of personal weather stations on August 19, 2022. I will
+create a simple tibble, and then attach proper geodetic information while
+converting it to an sf file. I will also transform the sf file to an
+appropriate projected UTM coordinate system.
+
+### Summary of process
+
+- Create geodetically proper data in geographic and/or projected coordinates
+- Create a grid to define interpolation locations
+- Build an interpolator
+  - Kriging
+  - Inverse weighted nearest neighbor
+  - Spline fitting
+- Interpolate/Predict points onto grid
+- Calculate error and plot
+- Generate contours
+- Plot contours over a basemap
+
+### References
+
+There are a number of references that have been especially helpful.
+
+[Geocomputation With R by Robin Lovelace:] (https://geocompr.robinlovelace.net/index.html)
+
+[Introduction to R Programming by Michael Dorman:] (http://132.72.155.230:3838/r/index.html)
+
+[Spatial Data Science by Edzer Pebesma and Roger Bivand:] (https://keen-swartz-3146c4.netlify.app/)
+
 
 ```{r make test data}
 
-#  Load some building permit data for Houston and select out solar panels
-
-df <- readRDS('/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/Houston_Permits/Clean_Final_1989_2019.rds') %>% 
-  filter(stringr::str_detect(Comments, "SOLAR")) %>% 
-  select(Zipcode, Lat, Lon) %>% 
-  filter(!is.na(Lat)) %>% 
-  filter(Lat>1)
+df <- tribble(
+  ~Rain, ~Lat, ~Lon,  
+   1.06, 29.8,  -95.4 ,
+   0.27, 29.74, -95.39,
+   0.15, 29.72, -95.43,
+   0.32, 29.73, -95.32,
+   0.75, 29.75, -95.47,
+   0.56, 29.79, -95.36,
+   1.72, 29.80, -95.42,
+   0.49, 29.70, -95.51,
+   1.3 , 29.76, -95.52,
+   0.74, 29.65, -95.49,
+   0.14, 29.82, -95.47,
+   1.09, 29.84, -95.41,
+   1.27, 29.84, -95.35,
+   0.09, 29.59, -95.37,
+   0   , 29.63, -95.54,
+   0.66, 29.81, -95.55,
+   1.1 , 29.74, -95.60,
+   2.75, 29.55, -95.42,
+   1.69, 29.56, -95.31,
+   0.16, 29.54, -95.36,
+   1.42, 29.91, -95.46,
+   0.26, 29.57, -95.53,
+   0.79, 29.88, -95.26,
+   0.28, 29.82, -95.20,
+   0.26, 29.64, -95.18,
+   1.06, 29.68, -95.63,
+   0.51, 29.93, -95.37,
+   0.03, 29.69, -95.16,
+   1.27, 29.75, -95.64,
+   1.08, 29.59, -95.58,
+   0.73, 29.58, -95.22,
+   1.96, 29.86, -95.60,
+   0.88, 29.90, -95.56,
+   1.4 , 29.93, -95.28,
+   0.9 , 29.53, -95.25,
+   2.24, 29.95, -95.45,
+   1.25, 29.82, -95.14,
+   0.27, 29.54, -95.57,
+   0.16, 29.64, -95.14,
+   0   , 29.96, -95.50,
+   0.22, 29.54, -95.21,
+   1.37, 29.84, -95.67,
+   0.23, 29.48, -95.31,
+   1.36, 29.54, -95.61,
+   0.15, 29.46, -95.37,
+   1.07, 29.58, -95.66,
+   1.91, 29.92, -95.16,
+   1.71, 29.95, -95.20,
+   1.97, 29.89, -95.66,
+   0.14, 29.56, -95.13,
+   0.48, 29.48, -95.22,
+   1.57, 29.94, -95.63,
+   2.58, 29.98, -95.60,
+   0.46, 29.52, -95.67,
+   1.6 , 29.48, -95.15,
+   1.77, 29.99, -95.67
+)
 
 #  Make it an sf file
 
-googlecrs <- 4326
+googlecrs <- "EPSG:4326"
+webcrs <- "EPSG:3857"
+localcrs <- "EPSG:26915"
+
+#     Panel locations only by lat long
 df_sf <- st_as_sf(df, coords=c("Lon", "Lat"), crs=googlecrs, agr = "identity")
+#     Locations and # panels by lat long
+df_sf <- st_as_sf(df, coords=c("Lon", "Lat"), crs=googlecrs, agr = "identity")
+#     Locations and # panels by X, Y
+df_xy <- st_transform(df_sf, crs="EPSG:26915")
 
 ```
 
-##      Make some simple plots of the points.
+##      To start, let's look at the density of points
+
+We will ignore the actual point values and just look at the point density.
+This is generally a good idea, just to get a feel for where the data is thin 
+and where the ending results are likely to be more reliable.
 
 Let's plot two ways, an interactive plot with Leaflet, and a static plot with
 ggplot, and also use tmap.
@@ -56,17 +171,105 @@ ggplot, and also use tmap.
 There are two fundamental parts to any map. The basemap, and the data. I like 
 Open Street Maps, so will using that.
 
+Note that OpenStreetMap essentially returns a pixel image of the basemap, in
+geographic coordinates. This means that to overlay he contours on the
+basemap, the contours must also be in geographic coordinates.
+
+To add a scalebar, there are two options: ggspatial or ggsn. 
+
+References that were especially helpful :
+
+https://swilke-geoscience.net/post/spatial_interpolation/
+https://github.com/dkahle/ggmap
+https://r-spatial.org/r/2018/10/25/ggplot2-sf.html
+
+### Basemaps
+
+My goal is to use the OpenStreet Map as a basemap. Retrieving those tiles
+will result in an image file in the so-called web crs,
+EPSG:3857, the Spherical Pseudo-Mercator projection. Being pixels, including
+the text, the image itself cannot be reprojected, so to use that image
+we will have to make sure everything is in EPSG:3857.
+
+There are several packages that will download OSM tiles.
+
+- OpenStreetMap: Last update a few years ago 
+- basemaps: appears to be an active project
+- osmdata: Pulls vector data - different beast
+- basemapR: active project, not CRAN
+
+Interestingly, OpenStreetMap and basemaps make crappy looking maps, fuzzy
+and not pleasing - cluttered with odd stuff. The basemapR map is much more
+esthetically pleasing.
+
+
+```{r basemaps}
+
+#   First let's define a bounding box based on the data
+
+bbox <- sf::st_bbox(df_sf)
+
+#   Expand box by 10% to give a little extra room
+Dx <- (bbox[["xmax"]]-bbox[["xmin"]])*0.05
+Dy <- (bbox[["ymax"]]-bbox[["ymin"]])*0.05
+bbox["xmin"] <- bbox["xmin"] - Dx
+bbox["xmax"] <- bbox["xmax"] + Dx
+bbox["ymin"] <- bbox["ymin"] - Dy
+bbox["ymax"] <- bbox["ymax"] + Dy
+
+#   Now let's look at some basemaps
+
+########  OpenStreetMap
+Basemap_1 <- OpenStreetMap::openmap(c(bbox[["ymin"]],
+                                    bbox[["xmin"]]),
+                                  c(bbox[["ymax"]],
+                                    bbox[["xmax"]]),
+                                  type="osm")
+
+########  basemaps
+basemaps::set_defaults(map_service = "osm", map_type = "streets")
+Basemap_2 <- basemaps::basemap_ggplot(ext=bbox)
+
+########  basemapR
+Basemap_3 <- basemapR::base_map(bbox, basemap="mapnik", increase_zoom=2)
+
+#   Plot in projected coordinates
+OpenStreetMap::autoplot.OpenStreetMap(Basemap_1) 
+#   Plot in Lat Long (Scale coordinates to act like lat-long )
+OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Basemap_1)) 
+  
+Basemap_2
+
+df_sf %>% ggplot() +
+  Basemap_3 +
+  geom_sf()
+
+
+```
+
+
+
 ```{r point maps in ggplot}
 
 #   First we plot maps with ggplot, or the wrapper OpenStreetMap
 
-library(ggsn) # for scale bars and north arrows
+# library(ggsn) # for scale bars and north arrows
+
+# Plot the input point locations
 
 df_sf %>% ggplot() + 
   geom_sf()
 
 #   But we need a basemap
 
+#    There are a number of packages for downloading basemaps.
+#   OpenStreetMap: Last update a few years ago (raster)
+#   basemaps: appears to be an active project
+basemaps::set_defaults(map_service = "osm", map_type = "streets")
+#   osmdata: Pulls vector data - different beast
+#   basemapR: active project, not CRAN
+
+#   One way to get a bounding box
 Bounding_box <- osmdata::getbb(place_name="Houston, Texas, USA")
 
 Basemap <- OpenStreetMap::openmap(c(Bounding_box[,1][[2]],
@@ -74,31 +277,289 @@ Basemap <- OpenStreetMap::openmap(c(Bounding_box[,1][[2]],
                                   c(Bounding_box[,2][[2]],
                                     Bounding_box[,2][[1]]),
                                   type="osm")
+#   Or we can use the data to define the bounding box
+bbox <- sf::st_bbox(df_sf)
+#   Expand box by 10% to give a little extra room
+Dx <- (bbox[["xmax"]]-bbox[["xmin"]])*0.05
+Dy <- (bbox[["ymax"]]-bbox[["ymin"]])*0.05
+bbox["xmin"] <- bbox["xmin"] - Dx
+bbox["xmax"] <- bbox["xmax"] + Dx
+bbox["ymin"] <- bbox["ymin"] - Dy
+bbox["ymax"] <- bbox["ymax"] + Dy
+
+Basemap <- OpenStreetMap::openmap(c(bbox[["ymin"]],
+                                    bbox[["xmin"]]),
+                                  c(bbox[["ymax"]],
+                                    bbox[["xmax"]]),
+                                  type="osm")
+Basemap <- basemaps::basemap_ggplot(ext=bbox)
+  # coord_sf(
+  #   xlim = c(bbox["xmin"], bbox["xmax"]),
+  #   ylim = c(bbox["ymin"], bbox["ymax"]), crs = 4326
+  # )
+
+
+
 Basemap2 <- OpenStreetMap::openproj(Basemap)
 
 OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
   geom_point(data=df, aes(x=Lon, y=Lat))
 
-#   Heat map
+##########################################################
+#   Heat map by count
+##########################################################
 
 #   Lay down basemap
-OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
+#OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
+  Basemap +
+  #basemaps::basemap_gglayer(bbox) +
   #   Add points
-  geom_point(data=df, aes(x=Lon, y=Lat)) +
+  geom_point(data=df, aes(x=Lon, y=Lat))# +
   #   Create filled density "contours" - the as.numeric converts from factor for
   #   the scale_fill_gradient command.
   stat_density_2d_filled(data=df, 
                          alpha = 0.4, 
-                         #binwidth=2.0,
-                         binwidth=1.60934,
+                         n=50,
+                  contour_var="density",
+                         #binwidth=1.60934, # native units are kilometers, 
+                         #binwidth=1.60934/64, # native units are kilometers, 
+                         #                   so convert to miles
                          aes(x=Lon, y=Lat, 
                              fill=as.numeric(..level..))) +
   #   Add actual contour lines
   stat_density_2d(data=df, 
                   alpha = 0.8, 
-                  binwidth=1.60934,
+                  n=50,
+                  #binwidth=1.60934/64,
                   contour=TRUE,
+                  contour_var="density",
                   aes(x=Lon, y=Lat )) +
+  #   Twiddle the color scale
+  scale_fill_gradient2("Rainfall Station\ndensity", 
+                       low = "white", 
+                       mid = "yellow", 
+                       high = "red", 
+                       limits=c(0,10),
+                       midpoint = 5) +
+  #   Add a scale bar
+  #ggsn::scalebar(df_sf, dist = 2, dist_unit = "mi", location="bottomleft",
+  #           transform = TRUE, model = "WGS84") +
+  ggspatial::annotation_scale(plot_unit="km") +
+  #   Add title
+  ggtitle("Density of Rainfall Measurements") +
+  #   Remove lat/long tics and labels as unnecessary
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank()
+        ) +
+  labs(x="", y="")
+```
+
+
+##        Contours by value
+
+This is complicated. Because we want a basemap underneath, the basemap is in 
+EPSG:3857, the Spherical Pseudo-Mercator projection, and is
+basically just an image.
+
+But gridding schemes want to be in X-Y.
+
+So let's set up a lat-long grid, convert to X-Y, interpolate to the X-Y locations, and
+then put those back on the lat-long grid.
+
+
+```{r heat maps by value}
+
+
+##########################################################
+#   Heat map by value
+##########################################################
+
+#   This is more complex. We first have to create a grid, then
+#   interpolate to that grid. Then we can contour the grid.
+
+####   Create a grid to interpolate to
+
+df_grid <- df_sf_pan %>% 
+  st_bbox() %>% 
+  st_as_sfc() %>% 
+  st_make_grid(
+  cellsize = c(.01, .01), # degrees
+  what = "centers"
+  ) %>%
+  st_as_sf() %>%
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  mutate(Z = 0)
+
+#   Also create a raster of the grid for some of the algorithms
+
+df_grid_raster <- df_grid %>% 
+  raster::rasterFromXYZ(
+     crs = googlecrs
+  )
+
+#   Now fit various models to the data
+
+#   -------- Nearest Neighbor
+fit_NN <- gstat::gstat( # using package {gstat} 
+  formula = Num_panels ~ 1,    
+  data = as(df_sf_pan, "Spatial"), # using {sf} and converting to {sp}
+  nmax = 10, nmin = 3 # Number of neighboring observations used for the fit
+)
+
+# -------- Inverse Distance Weighting
+fit_IDW <- gstat::gstat( # The setup here is quite similar to NN
+  formula = Num_panels ~ 1,
+  data = as(df_sf_pan, "Spatial"), # using {sf} and converting to {sp}
+  nmax = 10, nmin = 3,
+  set = list(idp = 0.5) # inverse distance power
+)
+
+interp_IDW <- raster::interpolate(df_grid_raster, fit_IDW)
+
+# -------- Thin Plate Spline Regression
+fit_TPS <- fields::Tps( # using {fields}
+  x = as.matrix(df_panels[, c("Lon", "Lat")]), # accepts points but expects them as matrix
+  Y = df_panels$Num_panels,  # the dependent variable
+  miles = FALSE     # EPSG 25833 is based in meters
+)
+
+# --------- Generalized Additive Model
+#fit_GAM <- mgcv::gam( # using {mgcv}
+#  Num_panels ~ s(Lon, Lat),      # here come our X/Y/Z data - straightforward enough
+#  data = df_panels      # specify in which object the data is stored
+#)
+
+# --------- Automatized Kriging  
+fit_KRIG <- automap::autoKrige(      # using {automap}
+  formula = Num_panels ~ 1,         # The interface is similar to {gstat} but
+  input_data = as(df_xy_pan, "Spatial") # {automap} makes a lot of assumptions for you
+) %>% 
+  .$krige_output %>%  # the function returns a complex object with lot's of metainfo
+  as.data.frame() %>% # we keep only the data we are interested in
+  dplyr::select(X = x1, Y = x2, Z = var1.pred) 
+interp_KRIG <- raster::rasterFromXYZ(fit_KRIG, crs = googlecrs)
+# Convert grid to a lat-long tibble of points
+df_krig <- raster::rasterToPoints(interp_KRIG) %>% 
+  as_tibble() %>% 
+  st_as_sf(., coords=c("x", "y"), crs=26915, agr = "identity") %>% 
+  st_transform(., crs=googlecrs) %>% 
+     mutate(Lon = unlist(map(geometry,1)),
+            Lat = unlist(map(geometry,2))) %>% 
+  st_drop_geometry()
+#   Lat long raster
+df_grid_raster_sp <- sp::SpatialPoints(df_grid_raster)
+fitmax <- gstat::gstat(formula = Z ~ 1, data = df_krig, nmax = 4, set = list(idp = .5))
+maxint <- raster::interpolate(object=df_grid_raster_sp, model=fitmax)
+
+wgs84 = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+df_krig_ll = raster::projectRaster(from=df_krig, to=df_grid_raster,
+                                   crs = googlecrs, method = "bilinear")
+#df_krig_ll <- raster::projectRaster(interp_KRIG, crs = googlecrs)
+#df_krig_ll <- raster::rasterToPolygons(df_krig_ll)
+#' Transform raster as data.frame to be later used with ggplot
+#' Modified from rasterVis::gplot
+#'
+#' @param x A Raster* object
+#' @param maxpixels Maximum number of pixels to use
+#'
+#' @details rasterVis::gplot is nice to plot a raster in a ggplot but
+#' if you want to plot different rasters on the same plot, you are stuck.
+#' If you want to add other information or transform your raster as a
+#' category raster, you can not do it. With `SDMSelect::gplot_data`, you retrieve your
+#' raster as a data.frame that can be modified as wanted using `dplyr` and
+#' then plot in `ggplot` using `geom_tile`.
+#' If Raster has levels, they will be joined to the final tibble.
+#'
+#' @export
+
+gplot_data <- function(x, maxpixels = 50000)  {
+  x <- raster::sampleRegular(x, maxpixels, asRaster = TRUE)
+  coords <- raster::xyFromCell(x, seq_len(raster::ncell(x)))
+  ## Extract values
+  dat <- utils::stack(as.data.frame(raster::getValues(x)))
+  names(dat) <- c('value', 'variable')
+
+  dat <- dplyr::as.tbl(data.frame(coords, dat))
+
+  if (!is.null(levels(x))) {
+    dat <- dplyr::left_join(dat, levels(x)[[1]],
+                            by = c("value" = "ID"))
+  }
+  dat
+}
+
+#   Lay down basemap
+OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
+#  ggplot()+
+  #geom_polygon(data=df_krig_ll, aes(fill=rep(df_krig_ll$data, each = 5)), alpha=0.8) 
+  #geom_tile(data=gplot_data(interp_KRIG), aes(x,y,fill=value), alpha=0.5)
+  geom_tile(data=gplot_data(interp_IDW), aes(x,y,fill=value), alpha=0.5)+
+  viridis::scale_fill_viridis() +
+  #   Add actual contour lines
+  geom_contour(data=gplot_data(interp_IDW), 
+                   aes(x,y, z=value),
+                   alpha = 0.8, 
+                   #binwidth=1.60934,
+                   binwidth=2
+   )
+  #   Twiddle the color scale
+  scale_fill_gradient2("Solar Panels\nper sq-mi", 
+                       low = "white", 
+                       mid = "yellow", 
+                       high = "red", 
+                       #limits=c(2,50),
+                       #midpoint =  5
+                       ) +
+  #   Add a scale bar
+  scalebar(df_sf, dist = 2, dist_unit = "mi", location="bottomleft",
+             transform = TRUE, model = "WGS84") +
+  #   Add title
+  ggtitle("Number of Solar Panels per sq-mi") +
+  #   Remove lat/long tics and labels as unnecessary
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank()
+        ) +
+  labs(x="", y="")
+
+
+# --------------  function for plotting a raster
+
+plot_raster <- function(raster) {
+  df <- raster::rasterToPoints(raster) %>% as_tibble()
+  colnames(df) <- c("X", "Y", "Z")
+  
+  ggplot(df, aes(x=X, y=Y, z=Z, fill=Z)) +
+  #OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
+    geom_point(data=df, aes(x=X, y=Y)) +
+    geom_raster(data=df, aes(x=X, y=Y, z=Z, fill=Z)) #+
+    #scale_fill_viridis(option="C")
+}
+
+plot_raster(interp_KRIG)
+
+##################################   stopped here
+#   Lay down basemap
+#OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
+  #   Add points
+ggplot(data=df_panels)+
+  geom_point(data=df_panels, aes(x=Lon, y=Lat)) +
+  #   Create filled density "contours" - the as.numeric converts from factor for
+  #   the scale_fill_gradient command.
+  # geom_contour_filled(data=df_panels, 
+  #                     alpha = 0.4, 
+  #                     #binwidth=1.60934, # native units are kilometers, 
+  #                     #                   so convert to miles
+  #                     aes(x=Lon, y=Lat, z=Num_panels)) +
+  #   Add actual contour lines
+  geom_contour(data=df_panels, 
+               alpha = 0.8, 
+               #binwidth=1.60934,
+               aes(x=Lon, y=Lat, z=Num_panels ))# +
   #   Twiddle the color scale
   scale_fill_gradient2("Solar Panels\nper sq-mi", 
                        low = "white", 
@@ -119,10 +580,84 @@ OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
         ) +
   labs(x="", y="")
 
-
+  
+ggplot(data=df_panels, aes(Lon, Lat, z=Num_panels, color=Num_panels))+
+  scale_color_gradientn(colors = c("blue", "yellow", "red")) +
+  geom_point() +
+  geom_contour()
 ```
 
 
+```{r cleaner grid and plot}
+coord_sf(xlim = st_coordinates(bbox_new)[c(1,2),1], # min & max of x values
+           ylim = st_coordinates(bbox_new)[c(2,3),2]) + # min & max of y values
+  
+  coord_sf(
+    xlim = c(bbox["xmin"], bbox["xmax"]),
+    ylim = c(bbox["ymin"], bbox["ymax"]), crs = 4326
+  )
+#   Create a bounding box and use for basemap
+
+bbox <- sf::st_bbox(df_sf)
+Basemap <- OpenStreetMap::openmap(c(bbox$ymin[[1]],
+                                    bbox$xmin[[1]]),
+                                  c(bbox$ymax[[1]],
+                                    bbox$xmax[[1]]),
+                                  type="osm")
+Basemap2 <- OpenStreetMap::openproj(Basemap)
+OpenStreetMap::autoplot.OpenStreetMap(Basemap2)
+
+#   Create a lat long grid
+
+####   Create a grid to interpolate to
+
+df_grid <- df_sf_pan %>% 
+  st_bbox() %>% 
+  st_as_sfc() %>% 
+  st_make_grid(
+  cellsize = c(.01, .01), # degrees
+  what = "centers"
+  ) %>%
+  st_as_sf() %>%
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  mutate(Z = 0)
+
+#   Also create a raster of the grid for some of the algorithms
+
+df_grid_raster <- df_grid %>% 
+  raster::rasterFromXYZ(
+     crs = googlecrs
+  )
+
+# -------- Inverse Distance Weighting
+fit_IDW <- gstat::gstat( # The setup here is quite similar to NN
+  formula = Num_panels ~ 1,
+  data = as(df_sf_pan, "Spatial"), # using {sf} and converting to {sp}
+  nmax = 10, nmin = 2,
+  set = list(idp = 0.5) # inverse distance power
+)
+
+#   Apply model to grid to create predicted points
+interp_IDW <- raster::interpolate(df_grid_raster, fit_IDW)
+
+#   Smooth the result for esthetics
+interp_IDW_sm <- raster::focal(interp_IDW, w=matrix(1, 3, 3), mean, pad=TRUE)
+
+#   Lay down basemap
+OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
+  geom_tile(data=gplot_data(interp_IDW_sm), aes(x,y,fill=value), alpha=0.3)+
+  viridis::scale_fill_viridis() +
+  #   Add actual contour lines
+  geom_contour(data=gplot_data(interp_IDW_sm), 
+                   aes(x,y, z=value),
+                   alpha = 0.8, 
+                   binwidth=3) +
+  geom_point(data=df_panels, aes(x=Lon, y=Lat, color=Num_panels)) 
+  
+  
+  
+```
 
 
 
