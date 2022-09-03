@@ -188,7 +188,7 @@ https://r-spatial.org/r/2018/10/25/ggplot2-sf.html
 My goal is to use the OpenStreet Map as a basemap. Retrieving those tiles
 will result in an image file in the so-called web crs,
 EPSG:3857, the Spherical Pseudo-Mercator projection. Being pixels, including
-the text, the image itself cannot be reprojected, so to use that image
+the text, the image itself cannot be easily reprojected, so to use that image
 we will have to make sure everything is in EPSG:3857.
 
 There are several packages that will download OSM tiles.
@@ -196,11 +196,18 @@ There are several packages that will download OSM tiles.
 - OpenStreetMap: Last update a few years ago 
 - basemaps: appears to be an active project
 - osmdata: Pulls vector data - different beast
-- basemapR: active project, not CRAN
+- basemapR: active project, not on CRAN
 
 Interestingly, OpenStreetMap and basemaps make crappy looking maps, fuzzy
 and not pleasing - cluttered with odd stuff. The basemapR map is much more
 esthetically pleasing.
+
+I don't understand what OpenStreetMap is actually doing when it "reprojects"
+the basemap.
+
+Using osmdata is a lot more work, and the map is much plainer (unless you
+expend significant effort adding and controlling features), but it does
+make a pretty good looking map.
 
 
 ```{r basemaps}
@@ -236,7 +243,8 @@ Basemap_3 <- basemapR::base_map(bbox, basemap="mapnik", increase_zoom=2)
 #   Plot in projected coordinates
 OpenStreetMap::autoplot.OpenStreetMap(Basemap_1) 
 #   Plot in Lat Long (Scale coordinates to act like lat-long )
-OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Basemap_1)) 
+OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Basemap_1),
+                                      projection=localcrs) 
   
 Basemap_2
 
@@ -244,6 +252,84 @@ df_sf %>% ggplot() +
   Basemap_3 +
   geom_sf()
 
+###########   Now for something different, let's create a map with vectors
+###########   by using osmdata and tmap.
+
+osmdata::available_features()
+osmdata::available_tags("highway")
+#     turn bounding box into matrix
+big_streets <- tmaptools::bb(bbox, output="matrix") %>%
+  #   Build query
+  osmdata::opq()%>%
+  #   Grab big roads
+  osmdata::add_osm_feature(key = "highway", 
+                  value = c("motorway", 
+                            "motorway_link" 
+                            )) %>%
+  #   Make sf
+  osmdata::osmdata_sf()
+
+#     turn bounding box into matrix
+med_streets <- tmaptools::bb(bbox, output="matrix") %>%
+  #   Build query
+  osmdata::opq()%>%
+  #   Grab big roads
+  osmdata::add_osm_feature(key = "highway", 
+                  value = c("primary", 
+                            "primary_link"
+                            )) %>%
+  #   Make sf
+  osmdata::osmdata_sf()
+
+lessbig_streets <- tmaptools::bb(bbox, output="matrix") %>%
+  #   Build query
+  osmdata::opq()%>%
+  #   Grab big roads
+  osmdata::add_osm_feature(key = "highway", 
+                  value = c( "secondary_link",
+                            "secondary")) %>%
+  #   Make sf
+  osmdata::osmdata_sf()
+
+#   Now get rivers
+osmdata::available_tags("waterway")
+osmdata::available_tags("water")
+river <- tmaptools::bb(bbox, output="matrix") %>%
+  osmdata::opq()%>%
+  osmdata::add_osm_feature(key = "waterway", value = "river") %>%
+  osmdata::osmdata_sf()
+lakes <- tmaptools::bb(bbox, output="matrix") %>%
+  osmdata::opq()%>%
+  osmdata::add_osm_feature(key = "water", value = c("reservoir",
+                                                    "lake",
+                                                    "pond")) %>%
+  osmdata::osmdata_sf()
+
+ggplot() +
+  geom_sf(data = med_streets$osm_lines,
+          inherit.aes = FALSE,
+          size = 0.4,
+          color = "grey25") +
+  geom_sf(data = big_streets$osm_lines,
+          inherit.aes = FALSE,
+          size = 0.4,
+          color = "red") +
+  geom_sf(data = lessbig_streets$osm_lines,
+          inherit.aes = FALSE,
+          size = 0.2,
+          color = "grey") +
+  geom_sf(data = river$osm_lines,
+          inherit.aes = FALSE,
+          size = 0.4,
+          color = "blue") +
+  geom_sf(data = lakes$osm_polygons,
+          inherit.aes = FALSE,
+          fill="steelblue",
+          color = "steelblue") +
+  coord_sf(xlim = c(bbox[["xmin"]], bbox[["xmax"]]),
+           ylim = c(bbox[["ymin"]], bbox[["ymax"]]),
+           expand = FALSE,
+           default_crs=googlecrs)
 
 ```
 
