@@ -16,7 +16,7 @@ showActions: no
 
 ```{r setup, include=FALSE}
 library(tidyverse)
-library(sf)
+#library(sf)
 library(leaflet)
 library(leaflet.extras)
 
@@ -61,6 +61,8 @@ appropriate projected UTM coordinate system.
 ### Summary of process
 
 - Create geodetically proper data in geographic and/or projected coordinates
+- Preliminary work : basemap, Area of Interest
+- Look at measurement point density
 - Create a grid to define interpolation locations
 - Build an interpolator
   - Kriging
@@ -75,11 +77,13 @@ appropriate projected UTM coordinate system.
 
 There are a number of references that have been especially helpful.
 
-[Geocomputation With R by Robin Lovelace:] (https://geocompr.robinlovelace.net/index.html)
+[Geocomputation With R by Robin Lovelace:](https://geocompr.robinlovelace.net/index.html)
 
-[Introduction to R Programming by Michael Dorman:] (http://132.72.155.230:3838/r/index.html)
+[Introduction to R Programming by Michael Dorman:](http://132.72.155.230:3838/r/index.html)
 
-[Spatial Data Science by Edzer Pebesma and Roger Bivand:] (https://keen-swartz-3146c4.netlify.app/)
+[Spatial Data Science by Edzer Pebesma and Roger Bivand:](https://keen-swartz-3146c4.netlify.app/)
+
+[Kernel density estimates for tidy and geospatial data in the eks package:](https://cran.r-project.org/web/packages/eks/vignettes/tidysf_kde.html)
 
 
 ```{r make test data}
@@ -144,18 +148,271 @@ df <- tribble(
    1.77, 29.99, -95.67
 )
 
-#  Make it an sf file
+#  A few handy crs codes
 
 googlecrs <- "EPSG:4326"
 webcrs <- "EPSG:3857"
-localcrs <- "EPSG:26915"
+localcrs <- "EPSG:26915" # UTM 15N NAD83
+localUTM <- "EPSG:32615" # a WGS84 similar to EPSG:26915 - same UTM zone
 
-#     Panel locations only by lat long
-df_sf <- st_as_sf(df, coords=c("Lon", "Lat"), crs=googlecrs, agr = "identity")
-#     Locations and # panels by lat long
-df_sf <- st_as_sf(df, coords=c("Lon", "Lat"), crs=googlecrs, agr = "identity")
-#     Locations and # panels by X, Y
-df_xy <- st_transform(df_sf, crs="EPSG:26915")
+#     Locations and rainfall by lat long
+df_sf <- sf::st_as_sf(df, coords=c("Lon", "Lat"), crs=googlecrs, agr = "identity")
+#     Locations and rainfall by Lat Long in webcrs
+df_web <- sf::st_transform(df_sf, crs=webcrs)
+#     Locations and rainfall by X, Y
+df_xy <- sf::st_transform(df_sf, crs=localcrs)
+#     Locations and rainfall by X, Y
+df_xy_2 <- sf::st_transform(df_sf, crs=localUTM)
+
+#   Let's define a bounding box (an AOI) based on the data (in Lat-Long)
+
+bbox <- sf::st_bbox(df_sf)
+
+#   Expand box by 10% to give a little extra room
+Dx <- (bbox[["xmax"]]-bbox[["xmin"]])*0.05
+Dy <- (bbox[["ymax"]]-bbox[["ymin"]])*0.05
+bbox["xmin"] <- bbox["xmin"] - Dx
+bbox["xmax"] <- bbox["xmax"] + Dx
+bbox["ymin"] <- bbox["ymin"] - Dy
+bbox["ymax"] <- bbox["ymax"] + Dy
+
+bb <- c(bbox["xmin"], bbox["ymin"], bbox["xmax"], bbox["ymax"])
+
+```
+
+
+### Basemaps
+
+My goal is to use the OpenStreet Map as a basemap. Retrieving those tiles
+will result in an image file in the so-called web crs,
+EPSG:3857, the Spherical Pseudo-Mercator projection. Being pixels, including
+the text, the image itself cannot be easily reprojected, so to use that image
+we will have to make sure everything is in EPSG:3857.
+
+There are several packages that will download OSM tiles.
+
+- OpenStreetMap: Last update a few years ago 
+- basemaps: appears to be an active project
+- osmdata: Pulls vector data - different beast
+- basemapR: active project, not on CRAN
+- ggspatial: active project, on CRAN
+
+Interestingly, OpenStreetMap, basemaps, and ggspatial make crappy looking maps, fuzzy
+and not pleasing - cluttered with odd stuff. The basemapR map is much more
+aesthetically pleasing.
+
+I don't understand what OpenStreetMap is actually doing when it "reprojects"
+the basemap. And it seems to be broken. Without reprojecting, the map appears
+to be in an X-Y system, but a strange one. I can reproject to a lat long
+system and everything seems okay, but if I give it an X-Y system to reproject
+to, it ends up in lat-long. At least according to the axis values. 
+Apparently OpenStreetMap uses the raster package to do projections. The following
+warning is in the raster::projectRaster docs, "User beware. Sadly, the PROJ.4 notation 
+has been partly deprecated in the GDAL/PROJ library that is used by this function. 
+You can still use it, but *only* with the the WGS84 datum. Other datums are silently 
+ignored." which explains a lot. Which is a serious limitation. Many states and counties
+in the US do not use WGS84, but use NAD83 - which is close, but leads to a different
+set of EPSG codes, and is a trap for the unwary. I really hate "silently ignores". That
+is aggressively user unfriendly.
+
+Using osmdata is a lot more work, and the map is much plainer (unless you
+expend significant effort adding and controlling features), but it does
+make a pretty good looking map.
+
+As far as I can tell, the only package that will allow for a projected basemap
+(that is X-Y coordinates) is OpenStreetMap. 
+
+There is also quite a bit of disparity in the size of the map objects. 
+
+```{r size table, echo-=FALSE, results='asis'}
+Basemap_size <- tribble( ~Package, ~Size_KB,
+                         "OpenStreetMap", 7.6,
+                         "basemaps", 5.3,
+                         "basemapR", 37.4,
+                         "ggspatial", 97.2)
+knitr::kable(Basemap_size, caption="Sizes in KB for different map objects")
+
+```
+
+
+```{r basemaps, warning=FALSE, message=FALSE}
+
+########  package: OpenStreetMap
+# Produces an OpenStreetMap object
+Basemap_1 <- OpenStreetMap::openmap(c(bbox[["ymin"]],
+                                    bbox[["xmin"]]),
+                                  c(bbox[["ymax"]],
+                                    bbox[["xmax"]]),
+                                  type="osm")
+
+########  package: basemaps
+# Produces a ggplot object
+basemaps::set_defaults(map_service = "osm", map_type = "streets")
+Basemap_2 <- basemaps::basemap_ggplot(ext=bbox)
+
+########  package: basemapR
+# Produces a ggplot object
+Basemap_3 <- basemapR::base_map(bbox, basemap="mapnik", increase_zoom=2)
+
+########  package: ggspatial
+# Produces a ggplot object
+Basemap_4 <- ggplot(df_sf) + ggspatial::annotation_map_tile(zoomin=-1) 
+
+# ---------------------   Let's plot the maps, with some data if possible
+
+#   Plot in projected coordinates, but be careful!
+m1 <- OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Basemap_1,
+                                      projection=localcrs)) +
+  geom_point(data=as_tibble(sf::st_coordinates(df_xy)), aes(x=X, y=Y))
+#   Plot in Lat Long (Scale coordinates to act like lat-long )
+m2 <- OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Basemap_1),
+                                      projection=googlecrs) +
+  geom_point(data=df, aes(y=Lat, x=Lon))
+  
+m3 <- Basemap_2 +
+  geom_sf(data=df_web)
+  
+
+m4 <- df_sf %>% ggplot() +
+  Basemap_3 +
+  geom_sf()
+
+m5 <- Basemap_4 +
+    geom_sf(inherit.aes = FALSE) +
+    theme_minimal()
+
+#gridExtra::grid.arrange(m1, m2, m3, m4, m5, ncol=2)
+
+m1
+m2
+m3
+m4
+m5
+
+```
+
+###  One more basemap, but this one built with vectors, not rasters
+
+The data from the Open Street Maps can be downloaded as points, vectors, and polygons.
+This allows a scale-free map of much higher resolution, but is not quite as nice,
+unless a lot of effort is expended on the aesthetics, and is also quite large. Actually
+the various vector layers are quite large, but the final map is quite small, as can
+be seen in the table below.
+
+```{r size table, echo-=FALSE, results='asis'}
+Basemap_size <- tribble( ~Package, ~Size_MB,
+                         "Big Streets", 36.8,
+                         "Medium Streets", 215.3,
+                         "Rivers", 23.3,
+                         "Lakes", 45.9,
+                         "ggplot object", 0.0057)
+knitr::kable(Basemap_size, caption="Sizes in MB for different map objects")
+```
+
+
+```{r basemaps_2, warning=FALSE, message=FALSE}
+
+###########   Now for something different, let's create a map with vectors
+###########   by using osmdata 
+
+osmdata::available_features()
+osmdata::available_tags("highway")
+
+
+#     pull out the "big streets"
+big_streets <- 
+  tmaptools::bb(bbox, output="matrix") %>% # turn bounding box into matrix
+  osmdata::opq()%>% # Build query
+  osmdata::add_osm_feature(key = "highway", 
+                  value = c("motorway", 
+                            "motorway_link" 
+                            )) %>% # select the big roads
+  osmdata::osmdata_sf() %>% # turn into an sf file
+  osmdata::trim_osmdata(tmaptools::bb(bbox, output="matrix")) # Trim to AOI
+  
+
+#     pull out the "medium streets"
+med_streets <- 
+  tmaptools::bb(bbox, output="matrix") %>%  # turn bounding box into matrix
+  osmdata::opq()%>%  #   Build query
+  osmdata::add_osm_feature(key = "highway", 
+                  value = c( "secondary_link",
+                            "secondary")) %>%  #   Grab smaller roads
+  osmdata::osmdata_sf() %>%  #   Make sf
+  osmdata::trim_osmdata(tmaptools::bb(bbox, output="matrix")) # Trim to AOI
+
+#   Now get rivers
+osmdata::available_tags("waterway")
+osmdata::available_tags("water")
+
+river <- tmaptools::bb(bbox, output="matrix") %>%
+  osmdata::opq()%>%
+  osmdata::add_osm_feature(key = "waterway", value = "river") %>%
+  osmdata::osmdata_sf() %>% 
+  osmdata::trim_osmdata(tmaptools::bb(bbox, output="matrix"))
+
+lakes <- tmaptools::bb(bbox, output="matrix") %>%
+  osmdata::opq()%>%
+  osmdata::add_osm_feature(key = "water", value = c("reservoir",
+                                                    "lake",
+                                                    "basin",
+                                                    "pond")) %>%
+  osmdata::osmdata_sf() %>% 
+  osmdata::trim_osmdata(tmaptools::bb(bbox, output="matrix"))
+
+#   Now put it all together and make a plot
+
+m6 <- ggplot() +
+  geom_sf(data = med_streets$osm_lines,
+          inherit.aes = FALSE,
+          size = 0.4,
+          color = "grey25") +
+  geom_sf(data = big_streets$osm_lines,
+          inherit.aes = FALSE,
+          size = 0.4,
+          color = "red") +
+  geom_sf(data = river$osm_lines,
+          inherit.aes = FALSE,
+          size = 0.4,
+          color = "blue") +
+  geom_sf(data = lakes$osm_polygons,
+          inherit.aes = FALSE,
+          fill="steelblue",
+          color = "steelblue") +
+  coord_sf(xlim = c(bbox[["xmin"]], bbox[["xmax"]]),
+           ylim = c(bbox[["ymin"]], bbox[["ymax"]]),
+           expand = FALSE,
+           default_crs=googlecrs)
+
+m6
+
+#   Covert to X-Y
+
+m7 <- ggplot() +
+  geom_sf(data = sf::st_transform(med_streets$osm_lines, crs=localcrs),
+          inherit.aes = FALSE,
+          size = 0.4,
+          color = "grey25") +
+  geom_sf(data = sf::st_transform(big_streets$osm_lines, crs=localcrs),
+          inherit.aes = FALSE,
+          size = 0.4,
+          color = "red") +
+  geom_sf(data = sf::st_transform(river$osm_lines, crs=localcrs),
+          inherit.aes = FALSE,
+          size = 0.4,
+          color = "blue") +
+  geom_sf(data = sf::st_transform(lakes$osm_polygons, crs=localcrs),
+          inherit.aes = FALSE,
+          fill="steelblue",
+          color = "steelblue") +
+  coord_sf(datum=localcrs)
+
+  coord_sf(xlim = c(bbox[["xmin"]], bbox[["xmax"]]),
+           ylim = c(bbox[["ymin"]], bbox[["ymax"]]),
+           expand = FALSE,
+           default_crs=localcrs)
+
+m7
 
 ```
 
@@ -182,241 +439,63 @@ References that were especially helpful :
 https://swilke-geoscience.net/post/spatial_interpolation/
 https://github.com/dkahle/ggmap
 https://r-spatial.org/r/2018/10/25/ggplot2-sf.html
+###       Measurement density
 
-### Basemaps
+Let's make a quick plot of the measurement location density. Always nice to
+get a feel for where the measurements are denser. My biggest issue with the 
+density plot is that I don't know what the numbers mean. A density of 5 is
+5 stations per what? Not at all clear. Of course, it is fairly bogus anyway
+since I have done everything in Lat-Long, and not in X-Y.
 
-My goal is to use the OpenStreet Map as a basemap. Retrieving those tiles
-will result in an image file in the so-called web crs,
-EPSG:3857, the Spherical Pseudo-Mercator projection. Being pixels, including
-the text, the image itself cannot be easily reprojected, so to use that image
-we will have to make sure everything is in EPSG:3857.
+Static map in ggplot, and lets make interactive maps in tmap and leaflet.
 
-There are several packages that will download OSM tiles.
-
-- OpenStreetMap: Last update a few years ago 
-- basemaps: appears to be an active project
-- osmdata: Pulls vector data - different beast
-- basemapR: active project, not on CRAN
-
-Interestingly, OpenStreetMap and basemaps make crappy looking maps, fuzzy
-and not pleasing - cluttered with odd stuff. The basemapR map is much more
-esthetically pleasing.
-
-I don't understand what OpenStreetMap is actually doing when it "reprojects"
-the basemap.
-
-Using osmdata is a lot more work, and the map is much plainer (unless you
-expend significant effort adding and controlling features), but it does
-make a pretty good looking map.
-
-
-```{r basemaps}
-
-#   First let's define a bounding box based on the data
-
-bbox <- sf::st_bbox(df_sf)
-
-#   Expand box by 10% to give a little extra room
-Dx <- (bbox[["xmax"]]-bbox[["xmin"]])*0.05
-Dy <- (bbox[["ymax"]]-bbox[["ymin"]])*0.05
-bbox["xmin"] <- bbox["xmin"] - Dx
-bbox["xmax"] <- bbox["xmax"] + Dx
-bbox["ymin"] <- bbox["ymin"] - Dy
-bbox["ymax"] <- bbox["ymax"] + Dy
-
-#   Now let's look at some basemaps
-
-########  OpenStreetMap
-Basemap_1 <- OpenStreetMap::openmap(c(bbox[["ymin"]],
-                                    bbox[["xmin"]]),
-                                  c(bbox[["ymax"]],
-                                    bbox[["xmax"]]),
-                                  type="osm")
-
-########  basemaps
-basemaps::set_defaults(map_service = "osm", map_type = "streets")
-Basemap_2 <- basemaps::basemap_ggplot(ext=bbox)
-
-########  basemapR
-Basemap_3 <- basemapR::base_map(bbox, basemap="mapnik", increase_zoom=2)
-
-#   Plot in projected coordinates
-OpenStreetMap::autoplot.OpenStreetMap(Basemap_1) 
-#   Plot in Lat Long (Scale coordinates to act like lat-long )
-OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Basemap_1),
-                                      projection=localcrs) 
-  
-Basemap_2
-
-df_sf %>% ggplot() +
-  Basemap_3 +
-  geom_sf()
-
-###########   Now for something different, let's create a map with vectors
-###########   by using osmdata and tmap.
-
-osmdata::available_features()
-osmdata::available_tags("highway")
-#     turn bounding box into matrix
-big_streets <- tmaptools::bb(bbox, output="matrix") %>%
-  #   Build query
-  osmdata::opq()%>%
-  #   Grab big roads
-  osmdata::add_osm_feature(key = "highway", 
-                  value = c("motorway", 
-                            "motorway_link" 
-                            )) %>%
-  #   Make sf
-  osmdata::osmdata_sf()
-
-#     turn bounding box into matrix
-med_streets <- tmaptools::bb(bbox, output="matrix") %>%
-  #   Build query
-  osmdata::opq()%>%
-  #   Grab big roads
-  osmdata::add_osm_feature(key = "highway", 
-                  value = c("primary", 
-                            "primary_link"
-                            )) %>%
-  #   Make sf
-  osmdata::osmdata_sf()
-
-lessbig_streets <- tmaptools::bb(bbox, output="matrix") %>%
-  #   Build query
-  osmdata::opq()%>%
-  #   Grab big roads
-  osmdata::add_osm_feature(key = "highway", 
-                  value = c( "secondary_link",
-                            "secondary")) %>%
-  #   Make sf
-  osmdata::osmdata_sf()
-
-#   Now get rivers
-osmdata::available_tags("waterway")
-osmdata::available_tags("water")
-river <- tmaptools::bb(bbox, output="matrix") %>%
-  osmdata::opq()%>%
-  osmdata::add_osm_feature(key = "waterway", value = "river") %>%
-  osmdata::osmdata_sf()
-lakes <- tmaptools::bb(bbox, output="matrix") %>%
-  osmdata::opq()%>%
-  osmdata::add_osm_feature(key = "water", value = c("reservoir",
-                                                    "lake",
-                                                    "pond")) %>%
-  osmdata::osmdata_sf()
-
-ggplot() +
-  geom_sf(data = med_streets$osm_lines,
-          inherit.aes = FALSE,
-          size = 0.4,
-          color = "grey25") +
-  geom_sf(data = big_streets$osm_lines,
-          inherit.aes = FALSE,
-          size = 0.4,
-          color = "red") +
-  geom_sf(data = lessbig_streets$osm_lines,
-          inherit.aes = FALSE,
-          size = 0.2,
-          color = "grey") +
-  geom_sf(data = river$osm_lines,
-          inherit.aes = FALSE,
-          size = 0.4,
-          color = "blue") +
-  geom_sf(data = lakes$osm_polygons,
-          inherit.aes = FALSE,
-          fill="steelblue",
-          color = "steelblue") +
-  coord_sf(xlim = c(bbox[["xmin"]], bbox[["xmax"]]),
-           ylim = c(bbox[["ymin"]], bbox[["ymax"]]),
-           expand = FALSE,
-           default_crs=googlecrs)
-
-```
-
+Note, I just discovered the package [eks](https://www.mvstat.net/mvksa/), 
+which is built for kernel smoothing in the tidyverse and with sf.
 
 
 ```{r point maps in ggplot}
 
-#   First we plot maps with ggplot, or the wrapper OpenStreetMap
+#   Prepare a scalebar to be used in all maps following
 
-# library(ggsn) # for scale bars and north arrows
+gsc <- ggspatial::annotation_scale(data=df_xy, 
+   location="br", width_hint=0.2, bar_cols=1)
+
+#   First we plot maps with ggplot, or the wrapper OpenStreetMap
 
 # Plot the input point locations
 
 df_sf %>% ggplot() + 
   geom_sf()
 
-#   But we need a basemap
-
-#    There are a number of packages for downloading basemaps.
-#   OpenStreetMap: Last update a few years ago (raster)
-#   basemaps: appears to be an active project
-basemaps::set_defaults(map_service = "osm", map_type = "streets")
-#   osmdata: Pulls vector data - different beast
-#   basemapR: active project, not CRAN
-
-#   One way to get a bounding box
-Bounding_box <- osmdata::getbb(place_name="Houston, Texas, USA")
-
-Basemap <- OpenStreetMap::openmap(c(Bounding_box[,1][[2]],
-                                    Bounding_box[,1][[1]]),
-                                  c(Bounding_box[,2][[2]],
-                                    Bounding_box[,2][[1]]),
-                                  type="osm")
-#   Or we can use the data to define the bounding box
-bbox <- sf::st_bbox(df_sf)
-#   Expand box by 10% to give a little extra room
-Dx <- (bbox[["xmax"]]-bbox[["xmin"]])*0.05
-Dy <- (bbox[["ymax"]]-bbox[["ymin"]])*0.05
-bbox["xmin"] <- bbox["xmin"] - Dx
-bbox["xmax"] <- bbox["xmax"] + Dx
-bbox["ymin"] <- bbox["ymin"] - Dy
-bbox["ymax"] <- bbox["ymax"] + Dy
-
-Basemap <- OpenStreetMap::openmap(c(bbox[["ymin"]],
-                                    bbox[["xmin"]]),
-                                  c(bbox[["ymax"]],
-                                    bbox[["xmax"]]),
-                                  type="osm")
-Basemap <- basemaps::basemap_ggplot(ext=bbox)
-  # coord_sf(
-  #   xlim = c(bbox["xmin"], bbox["xmax"]),
-  #   ylim = c(bbox["ymin"], bbox["ymax"]), crs = 4326
-  # )
-
-
-
-Basemap2 <- OpenStreetMap::openproj(Basemap)
-
 OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
   geom_point(data=df, aes(x=Lon, y=Lat))
 
+df_sf %>% ggplot() +
+  Basemap_3 +
+  geom_sf()
+
 ##########################################################
-#   Heat map by count
+#   Density map
 ##########################################################
 
 #   Lay down basemap
-#OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
-  Basemap +
-  #basemaps::basemap_gglayer(bbox) +
+ggplot() +
+  #   this is the best looking basemap
+  Basemap_3 +
   #   Add points
-  geom_point(data=df, aes(x=Lon, y=Lat))# +
-  #   Create filled density "contours" - the as.numeric converts from factor for
-  #   the scale_fill_gradient command.
+  geom_point(data=df, aes(x=Lon, y=Lat)) +
+  #   Create filled density "contours" - the as.numeric converts from factor
+  #   for the scale_fill_gradient command.
   stat_density_2d_filled(data=df, 
                          alpha = 0.4, 
                          n=50,
-                  contour_var="density",
-                         #binwidth=1.60934, # native units are kilometers, 
-                         #binwidth=1.60934/64, # native units are kilometers, 
-                         #                   so convert to miles
+                         contour_var="density",
                          aes(x=Lon, y=Lat, 
                              fill=as.numeric(..level..))) +
   #   Add actual contour lines
   stat_density_2d(data=df, 
                   alpha = 0.8, 
                   n=50,
-                  #binwidth=1.60934/64,
                   contour=TRUE,
                   contour_var="density",
                   aes(x=Lon, y=Lat )) +
@@ -425,12 +504,12 @@ OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
                        low = "white", 
                        mid = "yellow", 
                        high = "red", 
-                       limits=c(0,10),
-                       midpoint = 5) +
+                       limits=c(0,8),
+                       midpoint = 4) +
   #   Add a scale bar
+  gsc +
   #ggsn::scalebar(df_sf, dist = 2, dist_unit = "mi", location="bottomleft",
   #           transform = TRUE, model = "WGS84") +
-  ggspatial::annotation_scale(plot_unit="km") +
   #   Add title
   ggtitle("Density of Rainfall Measurements") +
   #   Remove lat/long tics and labels as unnecessary
@@ -439,7 +518,100 @@ OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
         axis.ticks.x = element_blank(),
         axis.ticks.y = element_blank()
         ) +
-  labs(x="", y="")
+  #   The Lat Long labels are distracting and unnecessary
+    labs(x="", y="")
+
+#######  Just for fun let's utilize the eks package for density estimates
+
+Sta_den <- eks::st_kde(df_sf) # calculate density
+
+xlim <- c()
+#   Lay down basemap
+ggplot() +
+  #   this is the best looking basemap
+  Basemap_3 +
+  #   Add points
+  geom_sf(data=df_sf) +
+  #   Create filled density "contours" 
+  geom_sf(data=eks::st_get_contour(Sta_den,
+                                   cont=c(20,40,60,80)),   
+          aes(fill=eks::label_percent(contlabel)), alpha=0.4) +
+  colorspace::scale_fill_discrete_sequential(name = "Density Percentile") +
+
+  #   Add a scale bar
+  ggsn::scalebar(df_sf, dist = 2, dist_unit = "mi", location="bottomleft",
+             transform = TRUE, model = "WGS84") +
+  #   Add title
+  ggtitle("Density of Rainfall Measurements") +
+  #   Remove lat/long tics and labels as unnecessary
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank()
+        ) +
+  #   The Lat Long labels are distracting and unnecessary
+    labs(x="", y="") +
+  coord_sf(xlim = c(bbox[["xmin"]], bbox[["xmax"]]),
+           ylim = c(bbox[["ymin"]], bbox[["ymax"]]),
+           expand = FALSE,
+           default_crs=googlecrs) #+
+  #ggthemes::theme_map()
+
+############    Now let's do it in Leaflet
+
+leaflet() %>% 
+  addTiles() %>% # OpenStreetMap by default
+  addCircleMarkers(data=df_sf, 
+                   radius=2, 
+                   color="black",
+                   opacity=1,
+                   fillOpacity = 1) %>% 
+  #   This is *not* the same as stat_density, and is scale dependent, 
+  #   which sucks.
+  addHeatmap(data=df, group="heat", max=.6, blur = 60,
+             radius=30)
+  
+# So let's try somethihg different. 
+#  (http://technocyclist.blogspot.com/2014/10/plot-contour-polygons-in-leaflet-using-r.html) 
+
+#   Create a density map, and display contours
+d2d = KernSmooth::bkde2D(cbind(df$Lon,df$Lat),bandwidth=c(0.0225,0.0225))
+contour(d2d$x1,d2d$x2,d2d$fhat)
+
+# Create linestrings
+lines = contourLines(x=d2d$x1, y=d2d$x2, z=d2d$fhat, nlevels = 8)
+
+# Create independent polygons within a list
+dd1 = sapply(1:length(lines), function(i) sp::Polygon(as.matrix(cbind(lines[[i]]$x,lines[[i]]$y))))
+#dd1 = sapply(1:length(lines), function(i) sf::st_polygon( list(cbind(lines[[i]]$x, lines[[i]]$y)))) 
+
+# Merge all independent polygons into a Polygons object (this contains multiple polygons)
+dd2 = sapply(1:length(lines),function(i) sp::Polygons(list(dd1[[i]]),i))
+##dd2 <- sf::st_multipolygon(dd1)
+
+# Don't forget to remember the contour value for each polygon - we store it into a dataframe for use in the next step
+poly_data = data.frame(Value = sapply(1:length(lines),function(i) lines[[i]]$level))
+
+# Merge the Polygons object dd2 with the dataframe containing the contour level data, poly_data.
+dd3 = sp::SpatialPolygonsDataFrame(sp::SpatialPolygons(dd2),data = poly_data) 
+
+# Convert our dd3 SpatialPolygonDataFrame object to JSON
+###dd_json = toGeoJSON(dd3,name="Rainfall")
+dd_json = geojsonio::geojson_json(dd3,name="Rainfall")
+
+# Store the unique levels of the contours, this will come in handy for colouring
+values = unique(sapply(1:length(lines),function(i) lines[[i]]$level)) 
+#sty = styleCat(prop="Value",val=values,style.val=brewer.pal(length(values),"Greens"),leg = "Tree Cover")
+
+leaflet(dd_json) %>% 
+  addTiles() %>% # OpenStreetMap by default
+  addCircleMarkers(data=df_sf, 
+                   radius=2, 
+                   color="black",
+                   opacity=1,
+                   fillOpacity = 1)  %>% 
+  addGeoJSON(dd_json)
+
 ```
 
 
