@@ -220,16 +220,16 @@ expend significant effort adding and controlling features), but it does
 make a pretty good looking map.
 
 As far as I can tell, the only package that will allow for a projected basemap
-(that is X-Y coordinates) is OpenStreetMap. 
+(that is X-Y coordinates) is OpenStreetMap. Which is sad.
 
 There is also quite a bit of disparity in the size of the map objects. 
 
 ```{r size table, echo-=FALSE, results='asis'}
 Basemap_size <- tribble( ~Package, ~Size_KB,
-                         "OpenStreetMap", 7.6,
-                         "basemaps", 5.3,
-                         "basemapR", 37.4,
-                         "ggspatial", 97.2)
+                         "OpenStreetMap", 6600,
+                         "basemaps", 4.7,
+                         "basemapR", 4.4,
+                         "ggspatial", 34.0)
 knitr::kable(Basemap_size, caption="Sizes in KB for different map objects")
 
 ```
@@ -296,17 +296,23 @@ m5
 The data from the Open Street Maps can be downloaded as points, vectors, and polygons.
 This allows a scale-free map of much higher resolution, but is not quite as nice,
 unless a lot of effort is expended on the aesthetics, and is also quite large. Actually
-the various vector layers are quite large, but the final map is quite small, as can
-be seen in the table below.
+the various vector layers can be quite large, but the final map is quite small, as can
+be seen in the table below. 
+
+For plotting the map in projected coordinates, we have to project the AOI as well. But we
+can plot the map in projected coordinates which most of the raster-based basemaps do not
+allow. So there are some clear advantages to using a vector map. Probably not what you want
+for a quick and dirty, but if you plane to be working in the same area for some time, it is
+probably worth spending the effort to tweak up a pretty vector-based map.
 
 ```{r size table, echo-=FALSE, results='asis'}
-Basemap_size <- tribble( ~Package, ~Size_MB,
-                         "Big Streets", 36.8,
-                         "Medium Streets", 215.3,
-                         "Rivers", 23.3,
+Basemap_size <- tribble( ~Package, ~Size_KB,
+                         "Big Streets", 47.4,
+                         "Medium Streets", 99.0,
+                         "Rivers", 35.4,
                          "Lakes", 45.9,
-                         "ggplot object", 0.0057)
-knitr::kable(Basemap_size, caption="Sizes in MB for different map objects")
+                         "ggplot object", 5.7)
+knitr::kable(Basemap_size, caption="Sizes in KB for different map objects")
 ```
 
 
@@ -327,8 +333,7 @@ big_streets <-
                   value = c("motorway", 
                             "motorway_link" 
                             )) %>% # select the big roads
-  osmdata::osmdata_sf() %>% # turn into an sf file
-  osmdata::trim_osmdata(tmaptools::bb(bbox, output="matrix")) # Trim to AOI
+  osmdata::osmdata_sf() # turn into an sf file
   
 
 #     pull out the "medium streets"
@@ -338,8 +343,7 @@ med_streets <-
   osmdata::add_osm_feature(key = "highway", 
                   value = c( "secondary_link",
                             "secondary")) %>%  #   Grab smaller roads
-  osmdata::osmdata_sf() %>%  #   Make sf
-  osmdata::trim_osmdata(tmaptools::bb(bbox, output="matrix")) # Trim to AOI
+  osmdata::osmdata_sf() #   Make sf
 
 #   Now get rivers
 osmdata::available_tags("waterway")
@@ -348,8 +352,7 @@ osmdata::available_tags("water")
 river <- tmaptools::bb(bbox, output="matrix") %>%
   osmdata::opq()%>%
   osmdata::add_osm_feature(key = "waterway", value = "river") %>%
-  osmdata::osmdata_sf() %>% 
-  osmdata::trim_osmdata(tmaptools::bb(bbox, output="matrix"))
+  osmdata::osmdata_sf()  
 
 lakes <- tmaptools::bb(bbox, output="matrix") %>%
   osmdata::opq()%>%
@@ -357,8 +360,7 @@ lakes <- tmaptools::bb(bbox, output="matrix") %>%
                                                     "lake",
                                                     "basin",
                                                     "pond")) %>%
-  osmdata::osmdata_sf() %>% 
-  osmdata::trim_osmdata(tmaptools::bb(bbox, output="matrix"))
+  osmdata::osmdata_sf() 
 
 #   Now put it all together and make a plot
 
@@ -379,16 +381,25 @@ m6 <- ggplot() +
           inherit.aes = FALSE,
           fill="steelblue",
           color = "steelblue") +
+  geom_sf(data=df_sf) +
+  #   coord_sf needs to follow all the geom_sf statements
   coord_sf(xlim = c(bbox[["xmin"]], bbox[["xmax"]]),
            ylim = c(bbox[["ymin"]], bbox[["ymax"]]),
            expand = FALSE,
-           default_crs=googlecrs)
+           default_crs=googlecrs)  
 
 m6
 
-#   Covert to X-Y
+#   Convert to X-Y for a projected map
 
-m7 <- ggplot() +
+#  First convert bounding box (I need to make this cleaner, but this will do for now)
+
+XYmin <- sf::st_transform(sf::st_sfc(sf::st_point(x=c(bbox[["xmin"]], bbox[["ymin"]])),
+                                     crs=googlecrs), crs=localcrs)
+XYmax <- sf::st_transform(sf::st_sfc(sf::st_point(x=c(bbox[["xmax"]], bbox[["ymax"]])),
+                                     crs=googlecrs), crs=localcrs)
+
+m7 <- ggplot(df_xy) +
   geom_sf(data = sf::st_transform(med_streets$osm_lines, crs=localcrs),
           inherit.aes = FALSE,
           size = 0.4,
@@ -405,11 +416,12 @@ m7 <- ggplot() +
           inherit.aes = FALSE,
           fill="steelblue",
           color = "steelblue") +
-  coord_sf(datum=localcrs)
-
-  coord_sf(xlim = c(bbox[["xmin"]], bbox[["xmax"]]),
-           ylim = c(bbox[["ymin"]], bbox[["ymax"]]),
+  geom_sf(data=df_xy) + # This will post graticules in X-Y rather than Lat-Long
+  # coord_sf must follow the geom_sf statements for the bounding box to be applied properly
+  coord_sf(xlim = c(XYmin[[1]][1], XYmax[[1]][1]),
+           ylim = c(XYmin[[1]][2], XYmax[[1]][2]),
            expand = FALSE,
+           datum=localcrs,
            default_crs=localcrs)
 
 m7
