@@ -428,6 +428,65 @@ m7
 
 ```
 
+### Interactive maps
+
+Now we will create basemaps with input points as interactive maps using both Leaflet and tmap.
+
+I like Leaflet, but it does seem to me to be a bit limited. What it does, it does well 
+and simply. I have foregone the default markers because I don't really like them, and so 
+that this map is more comparable to the other maps.
+
+Note that the basemap quality is quite high - the features and lettering are crisp and 
+distinct - something that the static basemaps seem to struggle with. There is a plugin
+for Leaflet that allows the use of projected data - but *only if the server uses that same
+projection*. So, for the general case of projecting to a local system, it is pretty useless
+unless you actually set up your own server for your area of interest.
+
+```{r leaflet basemap}
+
+leaflet::leaflet() %>% 
+  leaflet::addTiles() %>% # OpenStreetMap by default
+  leaflet::addCircleMarkers(data=df_sf, 
+                   radius=2, 
+                   color="black",
+                   opacity=1,
+                   fillOpacity = 1)
+
+```
+
+Finally let's take a look at tmap - which can do both static and interactive maps.
+
+```{r tmap basemap}
+
+tmap::tmap_mode("view") # set mode to interactive plots
+
+tmap::tm_shape(df_sf) + 
+  tmap::tm_sf(col="black", size=0.5)
+
+#  Note that you need to interactively pick which basemap to display
+
+#  Now make a static map
+
+tmap::tmap_mode("plot") # set mode to static plots
+
+Basemap_5 <- tmaptools::read_osm(bbox, type="osm")
+
+bbox_sf <- sf::st_sfc(sf::st_multipoint(x=tmaptools::bb(bbox, output="matrix", 
+                                             current.projection = googlecrs)))
+sf::st_crs(bbox_sf) <- googlecrs
+
+tmap::tm_shape(Basemap_5) +
+    tmap::tm_rgb() +
+tmap::tm_shape(df_sf) + 
+  tmap::tm_sf(col="black", size=0.5)
+
+#     And now for projected coordinates
+
+
+```
+
+
+
 ##      To start, let's look at the density of points
 
 We will ignore the actual point values and just look at the point density.
