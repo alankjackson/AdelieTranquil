@@ -272,7 +272,7 @@ m2 <- OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Basemap_1),
 m3 <- Basemap_2 +
   geom_sf(data=df_web)
   
-
+#   This is the best looking one.
 m4 <- df_sf %>% ggplot() +
   Basemap_3 +
   geom_sf()
@@ -456,6 +456,9 @@ leaflet::leaflet() %>%
 
 Finally let's take a look at tmap - which can do both static and interactive maps.
 
+We can also transform the basemap to a local X-Y coordinate system, but the results are
+not especially pleasing since the text labels get distorted by the transform.
+
 ```{r tmap basemap}
 
 tmap::tmap_mode("view") # set mode to interactive plots
@@ -471,37 +474,40 @@ tmap::tmap_mode("plot") # set mode to static plots
 
 Basemap_5 <- tmaptools::read_osm(bbox, type="osm")
 
-bbox_sf <- sf::st_sfc(sf::st_multipoint(x=tmaptools::bb(bbox, output="matrix", 
-                                             current.projection = googlecrs)))
-sf::st_crs(bbox_sf) <- googlecrs
+# bbox_sf <- sf::st_sfc(sf::st_multipoint(x=tmaptools::bb(bbox, output="matrix", 
+#                                              current.projection = googlecrs)))
+# sf::st_crs(bbox_sf) <- googlecrs
 
 tmap::tm_shape(Basemap_5) +
     tmap::tm_rgb() +
 tmap::tm_shape(df_sf) + 
-  tmap::tm_sf(col="black", size=0.5)
+  tmap::tm_sf(col="black", size=0.3)
 
 #     And now for projected coordinates
+
+Basemap_6 <- stars::st_transform_proj(Basemap_5, crs=localcrs)
+
+tmap::tm_shape(Basemap_6) +
+    tmap::tm_rgb() +
+tmap::tm_shape(df_xy) + 
+  tmap::tm_sf(col="black", size=0.3)
 
 
 ```
 
 
-
-##      To start, let's look at the density of points
+###   Density contours
 
 We will ignore the actual point values and just look at the point density.
 This is generally a good idea, just to get a feel for where the data is thin 
-and where the ending results are likely to be more reliable.
+and where the ending results are likely to be more reliable. And this will be 
+a good way to work through the mechanics of posting filled contours onto a
+basemap.
 
-Let's plot two ways, an interactive plot with Leaflet, and a static plot with
+Let's plot three ways, an interactive plot with Leaflet, and a static plot with
 ggplot, and also use tmap.
 
-There are two fundamental parts to any map. The basemap, and the data. I like 
-Open Street Maps, so will using that.
-
-Note that OpenStreetMap essentially returns a pixel image of the basemap, in
-geographic coordinates. This means that to overlay he contours on the
-basemap, the contours must also be in geographic coordinates.
+For the static maps, I will use the basemaps generated above that looked the best.
 
 To add a scalebar, there are two options: ggspatial or ggsn. 
 
