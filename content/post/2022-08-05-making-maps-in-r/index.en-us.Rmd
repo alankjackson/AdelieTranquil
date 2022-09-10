@@ -461,6 +461,9 @@ not especially pleasing since the text labels get distorted by the transform.
 
 ```{r tmap basemap}
 
+#   Set default basemap
+tmap::tmap_options(basemaps="OpenStreetMap")
+
 tmap::tmap_mode("view") # set mode to interactive plots
 
 tmap::tm_shape(df_sf) + 
@@ -516,6 +519,8 @@ References that were especially helpful :
 https://swilke-geoscience.net/post/spatial_interpolation/
 https://github.com/dkahle/ggmap
 https://r-spatial.org/r/2018/10/25/ggplot2-sf.html
+[eks](https://www.mvstat.net/mvksa/)
+
 ###       Measurement density
 
 Let's make a quick plot of the measurement location density. Always nice to
@@ -524,43 +529,33 @@ density plot is that I don't know what the numbers mean. A density of 5 is
 5 stations per what? Not at all clear. Of course, it is fairly bogus anyway
 since I have done everything in Lat-Long, and not in X-Y.
 
-Static map in ggplot, and lets make interactive maps in tmap and leaflet.
+One advantage of using the eks density estimate, is that it is clearer what the 
+output means. The 20% contour means "20% of the measurements lie inside this contour".
+The documentation for eks takes issue with how stat_density_2d does its calculation,
+I don't know who is right, but for this dataset they are quite similar results.
 
-Note, I just discovered the package [eks](https://www.mvstat.net/mvksa/), 
-which is built for kernel smoothing in the tidyverse and with sf.
+I have also added a scalebar to the maps, which is a good idea. I like the scalebar from
+ggspatial the best, but the scalebar made with ggsn is generally easier to get to work
+and less fussy.
 
+Note that I am mixing and matching things from ggspatial with other things, to get what I
+like the best. This can cause issues, but a little patience can get it all to work. It is
+and example of how some more consolidation and standards in this realm would be really
+helpful.
 
-```{r point maps in ggplot}
-
-#   Prepare a scalebar to be used in all maps following
-
-gsc <- ggspatial::annotation_scale(data=df_xy, 
-   location="br", width_hint=0.2, bar_cols=1)
-
-#   First we plot maps with ggplot, or the wrapper OpenStreetMap
-
-# Plot the input point locations
-
-df_sf %>% ggplot() + 
-  geom_sf()
-
-OpenStreetMap::autoplot.OpenStreetMap(Basemap2) +
-  geom_point(data=df, aes(x=Lon, y=Lat))
-
-df_sf %>% ggplot() +
-  Basemap_3 +
-  geom_sf()
+```{r static density maps}
 
 ##########################################################
 #   Density map
 ##########################################################
 
 #   Lay down basemap
-ggplot() +
+m1 <- 
+ggplot(df_sf) +
   #   this is the best looking basemap
   Basemap_3 +
   #   Add points
-  geom_point(data=df, aes(x=Lon, y=Lat)) +
+  geom_sf(inherit.aes = FALSE) +
   #   Create filled density "contours" - the as.numeric converts from factor
   #   for the scale_fill_gradient command.
   stat_density_2d_filled(data=df, 
@@ -584,27 +579,23 @@ ggplot() +
                        limits=c(0,8),
                        midpoint = 4) +
   #   Add a scale bar
-  gsc +
-  #ggsn::scalebar(df_sf, dist = 2, dist_unit = "mi", location="bottomleft",
-  #           transform = TRUE, model = "WGS84") +
+ ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
+    location="br", width_hint=0.2, bar_cols=1) +
+#  ggsn::scalebar(df_sf, dist = 2, dist_unit = "mi", location="bottomleft",
+#             transform = TRUE, model = "WGS84") +
   #   Add title
   ggtitle("Density of Rainfall Measurements") +
-  #   Remove lat/long tics and labels as unnecessary
-  theme(axis.text.x = element_blank(),
-        axis.text.y = element_blank(),
-        axis.ticks.x = element_blank(),
-        axis.ticks.y = element_blank()
-        ) +
-  #   The Lat Long labels are distracting and unnecessary
-    labs(x="", y="")
+  labs(subtitle="Density using stat_density_2d") +
+  coord_sf(crs=googlecrs) # required 
+
 
 #######  Just for fun let's utilize the eks package for density estimates
 
 Sta_den <- eks::st_kde(df_sf) # calculate density
 
-xlim <- c()
 #   Lay down basemap
-ggplot() +
+m2 <- 
+  ggplot() +
   #   this is the best looking basemap
   Basemap_3 +
   #   Add points
@@ -616,23 +607,26 @@ ggplot() +
   colorspace::scale_fill_discrete_sequential(name = "Density Percentile") +
 
   #   Add a scale bar
-  ggsn::scalebar(df_sf, dist = 2, dist_unit = "mi", location="bottomleft",
-             transform = TRUE, model = "WGS84") +
+  ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
+    location="br", width_hint=0.2, bar_cols=1) +
+ # ggsn::scalebar(df_sf, dist = 2, dist_unit = "mi", location="bottomleft",
+  #           transform = TRUE, model = "WGS84") +
   #   Add title
   ggtitle("Density of Rainfall Measurements") +
-  #   Remove lat/long tics and labels as unnecessary
-  theme(axis.text.x = element_blank(),
-        axis.text.y = element_blank(),
-        axis.ticks.x = element_blank(),
-        axis.ticks.y = element_blank()
-        ) +
-  #   The Lat Long labels are distracting and unnecessary
-    labs(x="", y="") +
-  coord_sf(xlim = c(bbox[["xmin"]], bbox[["xmax"]]),
-           ylim = c(bbox[["ymin"]], bbox[["ymax"]]),
-           expand = FALSE,
-           default_crs=googlecrs) #+
-  #ggthemes::theme_map()
+  labs(subtitle="Density using EKS") +
+  coord_sf(crs=googlecrs) # required 
+
+
+m1
+m2
+
+```
+
+
+Now for Leaflet maps
+
+```{r leaflet density}
+
 
 ############    Now let's do it in Leaflet
 
@@ -648,46 +642,81 @@ leaflet() %>%
   addHeatmap(data=df, group="heat", max=.6, blur = 60,
              radius=30)
   
-# So let's try somethihg different. 
-#  (http://technocyclist.blogspot.com/2014/10/plot-contour-polygons-in-leaflet-using-r.html) 
+#   VERY conveniently, eks can generate an sf file of contour lines
+contours <- eks::st_get_contour(Sta_den, cont=c(20,40,60,80)) %>% 
+  mutate(value=as.numeric(levels(contlabel)))
 
-#   Create a density map, and display contours
-d2d = KernSmooth::bkde2D(cbind(df$Lon,df$Lat),bandwidth=c(0.0225,0.0225))
-contour(d2d$x1,d2d$x2,d2d$fhat)
+pal_fun <- colorQuantile("YlOrRd", NULL, n = 5)
 
-# Create linestrings
-lines = contourLines(x=d2d$x1, y=d2d$x2, z=d2d$fhat, nlevels = 8)
+p_popup <- paste("Density", as.numeric(levels(contours$contlabel)), "%")
 
-# Create independent polygons within a list
-dd1 = sapply(1:length(lines), function(i) sp::Polygon(as.matrix(cbind(lines[[i]]$x,lines[[i]]$y))))
-#dd1 = sapply(1:length(lines), function(i) sf::st_polygon( list(cbind(lines[[i]]$x, lines[[i]]$y)))) 
-
-# Merge all independent polygons into a Polygons object (this contains multiple polygons)
-dd2 = sapply(1:length(lines),function(i) sp::Polygons(list(dd1[[i]]),i))
-##dd2 <- sf::st_multipolygon(dd1)
-
-# Don't forget to remember the contour value for each polygon - we store it into a dataframe for use in the next step
-poly_data = data.frame(Value = sapply(1:length(lines),function(i) lines[[i]]$level))
-
-# Merge the Polygons object dd2 with the dataframe containing the contour level data, poly_data.
-dd3 = sp::SpatialPolygonsDataFrame(sp::SpatialPolygons(dd2),data = poly_data) 
-
-# Convert our dd3 SpatialPolygonDataFrame object to JSON
-###dd_json = toGeoJSON(dd3,name="Rainfall")
-dd_json = geojsonio::geojson_json(dd3,name="Rainfall")
-
-# Store the unique levels of the contours, this will come in handy for colouring
-values = unique(sapply(1:length(lines),function(i) lines[[i]]$level)) 
-#sty = styleCat(prop="Value",val=values,style.val=brewer.pal(length(values),"Greens"),leg = "Tree Cover")
-
-leaflet(dd_json) %>% 
+leaflet(contours) %>% 
   addTiles() %>% # OpenStreetMap by default
   addCircleMarkers(data=df_sf, 
                    radius=2, 
                    color="black",
                    opacity=1,
                    fillOpacity = 1)  %>% 
-  addGeoJSON(dd_json)
+  addPolygons(fillColor = ~pal_fun(as.numeric(contlabel)),
+              popup = p_popup)
+
+```
+
+Okay, now let's see what it takes to make a similar map in tmap.
+
+I should note that one issue I have with tmap is that it will silently ignore errors
+far too often. I misspelled options, color palettes, and other items and the items were silently
+ignored, which was incredibly frustrating. That makes it much harder to use than it should be.
+
+```{r density map in tmap}
+
+
+tmap::tmap_mode("view") # set mode to interactive plots
+
+tmap::tm_shape(df_sf) + 
+    tmap::tm_sf(col="black", size=0.5) +
+  tmap::tm_shape(contours) +
+    tmap::tm_polygons(col="value",
+                      palette="Blues",
+                      alpha=0.5 )
+
+#  Note that you need to interactively pick which basemap to display
+
+#  Now make a static map
+
+tmap::tmap_mode("plot") # set mode to static plots
+
+Basemap_5 <- tmaptools::read_osm(bbox, type="osm")
+
+tmap::tm_shape(Basemap_5) +
+    tmap::tm_rgb() +
+  tmap::tm_shape(df_sf) + 
+    tmap::tm_sf(col="black", size=0.3) +
+  tmap::tm_shape(contours) +
+    tmap::tm_polygons(col="contlabel",
+                      title="Density %",
+                      labels=c("80%", "60%", "40%", "20%"),
+                      palette="Blues",
+                      alpha=0.5 ) +
+  tmap::tm_layout(legend.position = c("right", "top"),
+                  legend.frame=TRUE)
+
+#     And now for projected coordinates
+
+Basemap_6 <- stars::st_transform_proj(Basemap_5, crs=localcrs)
+
+tmap::tm_shape(Basemap_6) +
+    tmap::tm_rgb() +
+tmap::tm_shape(df_xy) + 
+  tmap::tm_sf(col="black", size=0.3)+
+  tmap::tm_shape(sf::st_transform(contours, crs=localcrs)) +
+    tmap::tm_polygons(col="contlabel",
+                      title="Density %",
+                      labels=c("80%", "60%", "40%", "20%"),
+                      palette="Blues",
+                      alpha=0.5 ) +
+  tmap::tm_layout(legend.position = c("right", "top"),
+                  legend.frame=TRUE)
 
 ```
 
