@@ -806,7 +806,7 @@ ggplot() +
 fit_IDW <- gstat::gstat( 
   formula = Rain ~ 1,
   data = df_xy, 
-  nmax = 10, nmin = 3,
+  #nmax = 10, nmin = 3,
   set = list(idp = 2) # inverse distance power
 )
 
@@ -843,7 +843,7 @@ ggplot() +
 
 foo_terra <- terra::rast(interp_IDW_stars) 
 foo_sm <- terra::focal(terra::focal(foo_terra, w=5, fun=median), w=7, fun=mean)
-brks <- classInt::classIntervals(pretty(n=10, x=na.omit(as.vector(foo_sm[[1]]))), n=8)
+brks <- classInt::classIntervals(pretty(n=10, x=na.omit(as.vector(foo_sm[[1]]))), n=6)
 #   Create contours again
 Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE, breaks=brks$brks)
 #  One more step - let's smooth the contours
@@ -889,6 +889,7 @@ for (i in 1:npts) {
   IDW.out[i] <- gstat::idw(formula=Rain ~ 1, 
                            locations=df_xy[-i,], 
                            newdata=df_xy[i,], 
+                           #nmax = 10, nmin = 3,
                            idp=2.0)$var1.pred
 }
 
@@ -907,13 +908,74 @@ sqrt( sum((IDW.out - df_xy$Rain)^2) / npts)
 
 ```
 
+```{r Kriging}
+
+#   Struggled a lot to get examples to work, so I went my own way
+#   It is important in Kriging to remove any low frequency trend. This is typically
+#   done by fitting a low-order polynomial surface to the data and subtracting that
+#   off before proceeding. Then at the end, you add it back. 
+
+#   Let's look at 1st and 2nd order fits
+
+df_xy_df <- bind_cols(sf::st_drop_geometry(df_xy), sf::st_coordinates(df_xy)) # make a tibble
+
+# Define the 1st order polynomial equation
+f.1 <- as.formula(Rain ~ X + Y) 
+
+# Run the regression model
+lm.1 <- lm( f.1, data=df_xy_df)
+
+#   Use predict to apply the model fit to the grid
+#     This re-attaches X-Y coordinates to the predicted values so they can be made into a grid
+
+Poly_fit.1 <- sf::st_as_sf(bind_cols(grd_template,data.frame(var1.pred=predict(lm.1, grd_template))), crs=localcrs, coords=c("X", "Y"))
+
+#   Convert to a stars object 
+Poly_fit_star.1 <- stars::st_rasterize(Poly_fit.1 %>% dplyr::select(value=var1.pred, geometry))
+
+ggplot() +
+  stars::geom_stars(data=Poly_fit_star.1) +
+  geom_sf(data=df_xy, color="black", size=5) +
+  scale_fill_gradientn(colors=rainbow(5)) 
+
+# Now let's do a 2nd order polynomial       
+
+##################################################################################
+
+# Define the 1st order polynomial equation
+f.1 <- as.formula(Rain ~ X + Y) 
+
+# Compute the sample variogram; note that the f.1 trend model is one of the
+# parameters passed to variogram(). This tells the function to create the 
+# variogram on the de-trended data.
+df_xy_df <- bind_cols(sf::st_drop_geometry(df_xy), sf::st_coordinates(df_xy)) # make a tibble
+var.smpl <- gstat::variogram(Rain ~ 1, 
+                             df_xy)
+                             as(df_xy, "Spatial")) # switch from {sf} to {sp}
+                             #cloud = FALSE, cutoff=1000000, width=89900)
+
+# Compute the variogram model by passing the nugget, sill and range values
+# to fit.variogram() via the vgm() function.
+dat.fit  <- fit.variogram(var.smpl, fit.ranges = FALSE, fit.sills = FALSE,
+                          vgm(psill=14, model="Sph", range=590000, nugget=0))
+
+# The following plot allows us to assess the fit
+plot(var.smpl, dat.fit, xlim=c(0,1000000))
+
+```
 
 
 
 
+```{r Bicubic splines}
+
+```
 
 
 
+```{r Thin Plate}
+
+```
 
 
 
