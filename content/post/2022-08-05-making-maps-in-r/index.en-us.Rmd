@@ -169,9 +169,9 @@ df_xy_2 <- sf::st_transform(df_sf, crs=localUTM)
 
 bbox <- sf::st_bbox(df_sf)
 
-#   Expand box by 10% to give a little extra room
-Dx <- (bbox[["xmax"]]-bbox[["xmin"]])*0.05
-Dy <- (bbox[["ymax"]]-bbox[["ymin"]])*0.05
+#   Expand box by 20% to give a little extra room
+Dx <- (bbox[["xmax"]]-bbox[["xmin"]])*0.1
+Dy <- (bbox[["ymax"]]-bbox[["ymin"]])*0.1
 bbox["xmin"] <- bbox["xmin"] - Dx
 bbox["xmax"] <- bbox["xmax"] + Dx
 bbox["ymin"] <- bbox["ymin"] - Dy
@@ -749,7 +749,7 @@ objectives of the map. Forcing sparse areas to not contour is one solution, or a
 pseudo-data to the sparse areas to control the interpolation is another.
 
 
-```{r heat maps by value}
+```{r Rainfall Inverse weighted map}
 
   # grid <- with(df_xy, interp::interp(X, Y, Rain))
   # griddf <- subset(data.frame(x = rep(grid$x, nrow(grid$z)),
@@ -767,13 +767,13 @@ bbox_xy = bbox %>%
 #    Two ways to create a grid definition - note that the first gives corner coordinates.
 
 grd_template <- expand.grid(
-  X = seq(from = bbox_xy["xmin"], to = bbox_xy["xmax"], by = 2000),
-  Y = seq(from = bbox_xy["ymin"], to = bbox_xy["ymax"], by = 2000) # 2000 m resolution
+  X = seq(from = bbox_xy["xmin"], to = bbox_xy["xmax"], by = 1000),
+  Y = seq(from = bbox_xy["ymin"], to = bbox_xy["ymax"], by = 1000) # 1000 m resolution
 )
 
 grd_template2 <- sf::st_make_grid(x=bbox_xy,
                                   what="corners",
-                                  cellsize=2000,
+                                  cellsize=1000,
                                   crs=localcrs
                                   )
 
@@ -797,9 +797,9 @@ ggplot() +
 #--------------------------------------------------------------
 #          Inverse Distance Weighting
 #--------------------------------------------------------------
-fit_IDW <- gstat::gstat( # The setup here is quite similar to NN
+fit_IDW <- gstat::gstat( 
   formula = Rain ~ 1,
-  data = df_xy, # using {sf} and converting to {sp}
+  data = df_xy, 
   nmax = 10, nmin = 3,
   set = list(idp = 2) # inverse distance power
 )
@@ -830,10 +830,9 @@ ggplot() +
   
 #   Hmmm.... could use some smoothing
 #   But stars does not have focal operations, so we go to terra?
-#   There is a hack...
 
 foo_terra <- terra::rast(interp_IDW_stars) 
-foo_sm <- terra::focal(terra::focal(foo_terra, w=3, fun=median), w=3, fun=mean)
+foo_sm <- terra::focal(terra::focal(foo_terra, w=5, fun=median), w=7, fun=mean)
 
 #  One more step - let's smooth the contours
 Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE)
@@ -866,7 +865,7 @@ ggplot() +
   geom_sf(data=df_sf) +
   #   Create filled density "contours" 
   geom_sf(data=Contours_LL, 
-          aes(fill=focal_mean), alpha=0.5) +
+          aes(fill=focal_mean), alpha=0.4) +
   colorspace::scale_fill_discrete_sequential(name = "Inches Rain") +
 
   #   Add a scale bar
