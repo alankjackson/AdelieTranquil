@@ -62,7 +62,7 @@ appropriate projected UTM coordinate system.
 
 - Create geodetically proper data in geographic and/or projected coordinates
 - Preliminary work : basemap, Area of Interest
-- Look at measurement point density
+- Plot contours of measurement point density
 - Create a grid to define interpolation locations
 - Build an interpolator
   - Kriging
@@ -77,14 +77,15 @@ appropriate projected UTM coordinate system.
 
 There are a number of references that have been especially helpful.
 
-[Geocomputation With R by Robin Lovelace:](https://geocompr.robinlovelace.net/index.html)
+[Geocomputation With R by Robin Lovelace: ](https://geocompr.robinlovelace.net/index.html)
 
-[Introduction to R Programming by Michael Dorman:](http://132.72.155.230:3838/r/index.html)
+[Introduction to R Programming by Michael Dorman: ](http://132.72.155.230:3838/r/index.html)
 
-[Spatial Data Science by Edzer Pebesma and Roger Bivand:](https://keen-swartz-3146c4.netlify.app/)
+[Spatial Data Science by Edzer Pebesma and Roger Bivand: ](https://keen-swartz-3146c4.netlify.app/)
 
 [Kernel density estimates for tidy and geospatial data in the eks package:](https://cran.r-project.org/web/packages/eks/vignettes/tidysf_kde.html)
 
+[Data Analysis and Visualization with R: Spatial: ](http://www.geo.hunter.cuny.edu/~ssun/R-Spatial/mapping.html#web-mapping-with-leaflet)
 
 ```{r make test data}
 
@@ -729,12 +730,151 @@ basically just an image.
 
 But gridding schemes want to be in X-Y.
 
-So let's set up a lat-long grid, convert to X-Y, interpolate to the X-Y locations, and
+So let's set up an X-Y grid, interpolate to the X-Y locations, and
 then put those back on the lat-long grid.
+
+One source of frustration here is that I would prefer to stick with just one "raster"
+package, but I don't see an easy way to not pop back and forth between terra and stars.
+Stars is much better integrated with sf, making those transitions smooth and painless,
+but terra has better smoothing options.
+
+Notes on making a grid. I have had many long, and sometimes heated discussions with
+colleagues on what a grid spacing should be. There is no right answer. The spacing should be
+of the same order of magnitude as the average spacing between your data points, but if that
+spacing is quite irregular with clusters and sparse areas, that becomes problematic. If you
+choose a spacing that honors the clustered data, then you may suffer from artifacts in the
+sparse data areas. If you honor the sparse spacing, then you will lose resolution in the densely
+populated areas. Ultimately it is a balancing act and needs to be looked at in light of the
+objectives of the map. Forcing sparse areas to not contour is one solution, or adding 
+pseudo-data to the sparse areas to control the interpolation is another.
 
 
 ```{r heat maps by value}
 
+  # grid <- with(df_xy, interp::interp(X, Y, Rain))
+  # griddf <- subset(data.frame(x = rep(grid$x, nrow(grid$z)),
+  #                             y = rep(grid$y, each = ncol(grid$z)),
+  #                             z = as.numeric(grid$z)),
+  #                  !is.na(z))
+
+#   First we create a grid to interpolate to - in XY coordinates, not lat long.  
+
+bbox_xy = bbox %>%
+  sf::st_as_sfc() %>%
+  sf::st_transform(crs = localcrs) %>%
+  sf::st_bbox()
+  
+#    Two ways to create a grid definition - note that the first gives corner coordinates.
+
+grd_template <- expand.grid(
+  X = seq(from = bbox_xy["xmin"], to = bbox_xy["xmax"], by = 2000),
+  Y = seq(from = bbox_xy["ymin"], to = bbox_xy["ymax"], by = 2000) # 2000 m resolution
+)
+
+grd_template2 <- sf::st_make_grid(x=bbox_xy,
+                                  what="corners",
+                                  cellsize=2000,
+                                  crs=localcrs
+                                  )
+
+grd_template3 <- terra::rast(xmin=bbox_xy["xmin"]-1000, xmax=bbox_xy["xmax"]+2000,
+                             ymin=bbox_xy["ymin"]-1000, ymax=bbox_xy["ymax"]+2000,
+                             resolution=2000,
+                             crs=localcrs,
+                             vals=1,
+                             names="Foo")
+
+ggplot() +
+  geom_point(data=grd_template, aes(x=X, y=Y)) +
+  geom_sf(data=grd_template2, shape="+", color="red", size=5) +
+  geom_sf(data=sf::st_as_sf(terra::as.points(grd_template3)), shape="o", size=6, color="green")
+
+#   I prefer the second method, since it creates a geographic object with an attached CRS,
+#   which is important. Keeping consistent coordinates is crucial.
+
+#     Create interpolators and interpolate to grid
+
+#--------------------------------------------------------------
+#          Inverse Distance Weighting
+#--------------------------------------------------------------
+fit_IDW <- gstat::gstat( # The setup here is quite similar to NN
+  formula = Rain ~ 1,
+  data = df_xy, # using {sf} and converting to {sp}
+  nmax = 10, nmin = 3,
+  set = list(idp = 2) # inverse distance power
+)
+
+#   Use predict to apply the model fit to the grid
+
+interp_IDW <- predict(fit_IDW, grd_template2)
+
+#   Quick sanity check, and can use to adjust the distance power
+#   Looks pretty good - most input points look close to the output
+#   grid points, with some notable exceptions. The red point to the north
+#   is probably bad data. Easier to judge from areal displays.
+ggplot() +
+  geom_sf(data=interp_IDW, aes(color=var1.pred), size=5) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5)) 
+
+#   Let's make some contours
+
+interp_IDW_stars <- stars::st_rasterize(interp_IDW %>% dplyr::select(value=var1.pred, geometry))
+Contours_IDW <- stars::st_contour(interp_IDW_stars, contour_lines=TRUE)
+
+ggplot() +
+  geom_sf(data=interp_IDW, aes(color=var1.pred), size=5) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5)) +
+  geom_sf(data=Contours_IDW, color="red") 
+  
+#   Hmmm.... could use some smoothing
+#   But stars does not have focal operations, so we go to terra?
+#   There is a hack...
+
+foo_terra <- terra::rast(interp_IDW_stars) 
+foo_sm <- terra::focal(terra::focal(foo_terra, w=3, fun=median), w=3, fun=mean)
+
+#  One more step - let's smooth the contours
+Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE)
+#Contours_sm <- stars::st_contour(foo_sm, contour_lines=TRUE)
+Contours_sm2 <- smoothr::smooth(Contours_sm, method="ksmooth", smoothness=2)
+
+ggplot() +
+  geom_sf(data=interp_IDW, aes(color=var1.pred), size=5) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5)) +
+  geom_sf(data=Contours_IDW, color="red") +
+  geom_sf(data=Contours_sm, color="black", alpha=0.4) +
+  geom_sf(data=Contours_sm, color="black", alpha=0.4) +
+  geom_sf(data=Contours_sm2, color="blue", aes(fill=focal_mean), alpha=0.4) 
+
+#   Now lets transform the contours to lat-long space and plot on the basemap
+
+#foo_sm_ll <- sf::st_transform(stars::st_as_stars(foo_sm), crs=googlecrs)
+#Contours_sm <- stars::st_contour(foo_sm_ll, contour_lines=TRUE)
+#Contours_sm2 <- smoothr::smooth(Contours_sm, method="ksmooth", smoothness=2)
+
+Contours_LL <- sf::st_transform(Contours_sm, crs=googlecrs)# %>% 
+  rename(Rain=focal_mean)# %>% 
+  mutate(Rain=as.factor(Rain))
+
+ggplot() +
+  #   this is the best looking basemap
+  Basemap_3 +
+  #   Add points
+  geom_sf(data=df_sf) +
+  #   Create filled density "contours" 
+  geom_sf(data=Contours_LL, 
+          aes(fill=focal_mean), alpha=0.5) +
+  colorspace::scale_fill_discrete_sequential(name = "Inches Rain") +
+
+  #   Add a scale bar
+  ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
+    location="br", width_hint=0.2, bar_cols=1) +
+  #   Add title
+  ggtitle("Rainfall Measurements") +
+  coord_sf(crs=googlecrs) # required 
 
 ##########################################################
 #   Heat map by value
@@ -1005,7 +1145,7 @@ fit_IDW <- gstat::gstat( # The setup here is quite similar to NN
 #   Apply model to grid to create predicted points
 interp_IDW <- raster::interpolate(df_grid_raster, fit_IDW)
 
-#   Smooth the result for esthetics
+#   Smooth the result for aesthetics
 interp_IDW_sm <- raster::focal(interp_IDW, w=matrix(1, 3, 3), mean, pad=TRUE)
 
 #   Lay down basemap
