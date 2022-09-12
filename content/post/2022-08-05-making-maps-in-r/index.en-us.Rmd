@@ -940,6 +940,60 @@ ggplot() +
 
 # Now let's do a 2nd order polynomial       
 
+f.2 <- as.formula(Rain ~ X + Y + I(X*X)+I(Y*Y) + I(X*Y))
+# Run the regression model
+lm.2 <- lm( f.2, data=df_xy_df)
+
+#   Use predict to apply the model fit to the grid
+#     This re-attaches X-Y coordinates to the predicted values so they can be made into a grid
+
+Poly_fit.2 <- sf::st_as_sf(bind_cols(grd_template,data.frame(var1.pred=predict(lm.2, grd_template))), crs=localcrs, coords=c("X", "Y"))
+
+#   Convert to a stars object 
+Poly_fit_star.2 <- stars::st_rasterize(Poly_fit.2 %>% dplyr::select(value=var1.pred, geometry))
+
+ggplot() +
+  stars::geom_stars(data=Poly_fit_star.2) +
+  geom_sf(data=df_xy, color="black", size=5) +
+  scale_fill_gradientn(colors=rainbow(5)) 
+
+#   A matter of judgement, but I think I like the first order fit better, so we'll go with it.
+#   First remove that fit from the input data
+
+trend <- bind_cols(predict(lm.1, as_tibble(sf::st_coordinates(df_xy))), 
+                sf::st_coordinates(df_xy)) %>% 
+  rename(Trend=1) %>%
+  mutate(Trend=as.numeric(Trend)) %>% 
+  bind_cols(df_xy) %>% 
+  mutate(Detrended=Rain-Trend) %>% 
+  sf::st_as_sf()
+
+#   Let's look at the variogram
+
+var.smpl <- gstat::variogram(Detrended ~ 1, 
+                             data=trend)
+# Compute the variogram model by passing the nugget, sill and range values
+# to fit.variogram() via the vgm() function.
+#                models are "Sph", "Exp", "Mat", and "Gau"
+dat.fit  <- gstat::fit.variogram(var.smpl, fit.ranges = TRUE, fit.sills = TRUE,
+                          gstat::vgm(psill=NA, model="Exp", range=NA, nugget=0))
+
+##plot(var.smpl, dat.fit, xlim=c(0,30000))
+
+ggplot(var.smpl, aes(x = dist, y = gamma)) +
+     geom_point() +
+     geom_line(data = gstat::variogramLine(dat.fit, maxdist = max(var.smpl$dist)))
+
+#   We have our model, so now let's use it
+
+k <- gstat(formula=OZDLYAV~1, locations=aq, model=fve)
+# predicted values
+kp <- predict(k, g)
+#------------------
+# Perform the krige interpolation (note the use of the variogram model
+# created in the earlier step)
+dat.krg <- krige( f.1, P, grd, dat.fit)
+
 ##################################################################################
 
 # Define the 1st order polynomial equation
@@ -951,7 +1005,7 @@ f.1 <- as.formula(Rain ~ X + Y)
 df_xy_df <- bind_cols(sf::st_drop_geometry(df_xy), sf::st_coordinates(df_xy)) # make a tibble
 var.smpl <- gstat::variogram(Rain ~ 1, 
                              df_xy)
-                             as(df_xy, "Spatial")) # switch from {sf} to {sp}
+                             #as(df_xy, "Spatial")) # switch from {sf} to {sp}
                              #cloud = FALSE, cutoff=1000000, width=89900)
 
 # Compute the variogram model by passing the nugget, sill and range values
@@ -960,7 +1014,7 @@ dat.fit  <- fit.variogram(var.smpl, fit.ranges = FALSE, fit.sills = FALSE,
                           vgm(psill=14, model="Sph", range=590000, nugget=0))
 
 # The following plot allows us to assess the fit
-plot(var.smpl, dat.fit, xlim=c(0,1000000))
+plot(var.smpl, dat.fit, xlim=c(0,40000))
 
 ```
 
