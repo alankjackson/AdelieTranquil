@@ -773,8 +773,8 @@ bbox_xy = bbox %>%
 #    Three ways to create a grid definition - note that the first gives corner coordinates.
 
 grd_template <- expand.grid(
-  X = seq(from = bbox_xy["xmin"], to = bbox_xy["xmax"], by = 1000),
-  Y = seq(from = bbox_xy["ymin"], to = bbox_xy["ymax"], by = 1000) # 1000 m resolution
+  X = seq(from = bbox_xy["xmin"], to = bbox_xy["xmax"]+1000, by = 1000),
+  Y = seq(from = bbox_xy["ymin"], to = bbox_xy["ymax"]+1000, by = 1000) # 1000 m resolution
 )
 
 grd_template2 <- sf::st_make_grid(x=bbox_xy,
@@ -783,9 +783,9 @@ grd_template2 <- sf::st_make_grid(x=bbox_xy,
                                   crs=localcrs
                                   )
 
-grd_template3 <- terra::rast(xmin=bbox_xy["xmin"]-1000, xmax=bbox_xy["xmax"]+2000,
-                             ymin=bbox_xy["ymin"]-1000, ymax=bbox_xy["ymax"]+2000,
-                             resolution=2000,
+grd_template3 <- terra::rast(xmin=bbox_xy["xmin"]-500, xmax=bbox_xy["xmax"]+1000,
+                             ymin=bbox_xy["ymin"]-500, ymax=bbox_xy["ymax"]+1000,
+                             resolution=1000,
                              crs=localcrs,
                              vals=1,
                              names="Foo")
@@ -986,13 +986,77 @@ ggplot(var.smpl, aes(x = dist, y = gamma)) +
 
 #   We have our model, so now let's use it
 
-k <- gstat(formula=OZDLYAV~1, locations=aq, model=fve)
-# predicted values
-kp <- predict(k, g)
-#------------------
-# Perform the krige interpolation (note the use of the variogram model
-# created in the earlier step)
-dat.krg <- krige( f.1, P, grd, dat.fit)
+Krigged_grid <- gstat::krige(Detrended ~ 1,
+                             trend,
+                             grd_template2,
+                             dat.fit)
+Krigged_star <- stars::st_rasterize(Krigged_grid %>% dplyr::select(value=var1.pred, geometry))
+Krigged_starvar <- stars::st_rasterize(Krigged_grid %>% dplyr::select(value=var1.var, geometry))
+
+Final_krige_star <- Krigged_star + Poly_fit_star.1
+
+#   and a nice plot, after some work
+
+ggplot() +
+  stars::geom_stars(data=Final_krige_star) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5)) 
+
+#   Let's make some contours
+
+#   Make some pretty breaks for contour intervals based on the data
+brks <- classInt::classIntervals(pretty(n=10, x=as.vector(Final_krige_star[[1]])), n=8)
+#   Create contour lines
+Contours_Krig <- stars::st_contour(Final_krige_star, contour_lines=TRUE, breaks=brks$brks)
+#   Plot to see what it all looks like
+ggplot() +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5)) +
+  geom_sf(data=Contours_Krig, color="red") 
+  
+#   Hmmm.... could use some smoothing
+#   But stars does not have focal operations, so we go to terra?
+
+foo_terra <- terra::rast(Final_krige_star) 
+foo_sm <- terra::focal(terra::focal(foo_terra, w=5, fun=median), w=7, fun=mean)
+brks <- classInt::classIntervals(pretty(n=10, x=na.omit(as.vector(foo_sm[[1]]))), n=6)
+#   Create contours again
+Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE, breaks=brks$brks)
+#  One more step - let's smooth the contours
+Contours_sm2 <- smoothr::smooth(Contours_sm, method="ksmooth", smoothness=2)
+
+#   and our final plot in X-Y space
+ggplot() +
+  #geom_sf(data=interp_IDW, aes(color=var1.pred), size=5) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5)) +
+  geom_sf(data=Contours_IDW, color="red") +
+  geom_sf(data=Contours_sm, color="black", alpha=0.4) +
+  geom_sf(data=Contours_sm, color="black", alpha=0.4) +
+  geom_sf(data=Contours_sm2, color="blue", aes(fill=focal_mean), alpha=0.4) 
+
+#   Now lets transform the contours to lat-long space and plot on the basemap
+
+Contours_LL <- sf::st_transform(Contours_sm, crs=googlecrs) 
+
+ggplot() +
+  #   this is the best looking basemap
+  Basemap_3 +
+  #   Add points
+  geom_sf(data=df_sf) +
+  #   Create filled density "contours" 
+  geom_sf(data=Contours_LL, 
+          aes(fill=focal_mean), alpha=0.4) +
+  colorspace::scale_fill_discrete_sequential(name = "Inches Rain") +
+
+  #   Add a scale bar
+  ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
+    location="br", width_hint=0.2, bar_cols=1) +
+  #   Add title
+  ggtitle("Rainfall Measurements") +
+  coord_sf(crs=googlecrs) # required 
+
+
 
 ##################################################################################
 
