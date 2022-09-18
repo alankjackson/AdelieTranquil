@@ -637,17 +637,17 @@ Now for Leaflet maps
 
 ############    Now let's do it in Leaflet
 
-leaflet() %>% 
-  addTiles() %>% # OpenStreetMap by default
-  addCircleMarkers(data=df_sf, 
-                   radius=2, 
-                   color="black",
-                   opacity=1,
-                   fillOpacity = 1) %>% 
+leaflet::leaflet() %>% 
+  leaflet::addTiles() %>% # OpenStreetMap by default
+  leaflet::addCircleMarkers(data=df_sf, 
+                            radius=2, 
+                            color="black",
+                            opacity=1,
+                            fillOpacity = 1) %>% 
   #   This is *not* the same as stat_density, and is scale dependent, 
   #   which sucks.
-  addHeatmap(data=df, group="heat", max=.6, blur = 60,
-             radius=30)
+  leaflet.extras::addHeatmap(data=df, group="heat", max=.6, blur = 60,
+                             radius=30)
   
 #   VERY conveniently, eks can generate an sf file of contour lines
 contours <- eks::st_get_contour(Sta_den, cont=c(20,40,60,80)) %>% 
@@ -657,15 +657,15 @@ pal_fun <- colorQuantile("YlOrRd", NULL, n = 5)
 
 p_popup <- paste("Density", as.numeric(levels(contours$contlabel)), "%")
 
-leaflet(contours) %>% 
-  addTiles() %>% # OpenStreetMap by default
-  addCircleMarkers(data=df_sf, 
-                   radius=2, 
-                   color="black",
-                   opacity=1,
-                   fillOpacity = 1)  %>% 
-  addPolygons(fillColor = ~pal_fun(as.numeric(contlabel)),
-              popup = p_popup)
+leaflet::leaflet(contours) %>% 
+  leaflet::addTiles() %>% # OpenStreetMap by default
+  leaflet::addCircleMarkers(data=df_sf, 
+                            radius=2, 
+                            color="black",
+                            opacity=1,
+                            fillOpacity = 1)  %>% 
+  leaflet::addPolygons(fillColor = ~pal_fun(as.numeric(contlabel)),
+                       popup = p_popup, weight=2)
 
 ```
 
@@ -736,13 +736,14 @@ basically just an image.
 
 But gridding schemes want to be in X-Y.
 
-So let's set up an X-Y grid, interpolate to the X-Y locations, and
-then put those back on the lat-long grid.
+So let's set up an X-Y grid, interpolate to the X-Y locations, contour, and
+then put those contours back into the lat-longs.
 
 One source of frustration here is that I would prefer to stick with just one "raster"
 package, but I don't see an easy way to not pop back and forth between terra and stars.
 Stars is much better integrated with sf, making those transitions smooth and painless,
-but terra has better smoothing options.
+but terra has better smoothing options. Additionally, I had to go back and use raster
+to access some functionality.
 
 Notes on making a grid. I have had many long, and sometimes heated discussions with
 colleagues on what a grid spacing should be. There is no right answer. The spacing should be
@@ -752,57 +753,88 @@ choose a spacing that honors the clustered data, then you may suffer from artifa
 sparse data areas. If you honor the sparse spacing, then you will lose resolution in the densely
 populated areas. Ultimately it is a balancing act and needs to be looked at in light of the
 objectives of the map. Forcing sparse areas to not contour is one solution, or adding 
-pseudo-data to the sparse areas to control the interpolation is another.
+pseudo-data to the sparse areas to control the interpolation is another. It was simpler when I 
+made my contour maps by hand on a drafting table, but a lot slower.
 
 
-```{r Rainfall Inverse weighted map}
+```{r Make some grids}
 
-  # grid <- with(df_xy, interp::interp(X, Y, Rain))
-  # griddf <- subset(data.frame(x = rep(grid$x, nrow(grid$z)),
-  #                             y = rep(grid$y, each = ncol(grid$z)),
-  #                             z = as.numeric(grid$z)),
-  #                  !is.na(z))
-
-#   First we create a grid to interpolate to - in XY coordinates, not lat long.  
+#   First we create a box to build the grid inside of - in XY coordinates, not lat long.  
 
 bbox_xy = bbox %>%
   sf::st_as_sfc() %>%
   sf::st_transform(crs = localcrs) %>%
   sf::st_bbox()
   
-#    Three ways to create a grid definition - note that the first gives corner coordinates.
+#    Four ways to create a grid definition - note that the first gives corner coordinates.
 
-grd_template <- expand.grid(
+#     Data frame
+grd_df <- expand.grid(
   X = seq(from = bbox_xy["xmin"], to = bbox_xy["xmax"]+1000, by = 1000),
   Y = seq(from = bbox_xy["ymin"], to = bbox_xy["ymax"]+1000, by = 1000) # 1000 m resolution
 )
 
-grd_template2 <- sf::st_make_grid(x=bbox_xy,
+#     sfc POINT file
+grd_sf <- sf::st_make_grid(x=bbox_xy,
                                   what="corners",
                                   cellsize=1000,
                                   crs=localcrs
                                   )
 
-grd_template3 <- terra::rast(xmin=bbox_xy["xmin"]-500, xmax=bbox_xy["xmax"]+1000,
+#     SpatRaster file
+grd_terra <- terra::rast(xmin=bbox_xy["xmin"]-500, xmax=bbox_xy["xmax"]+1000,
                              ymin=bbox_xy["ymin"]-500, ymax=bbox_xy["ymax"]+1000,
                              resolution=1000,
                              crs=localcrs,
                              vals=1,
                              names="Foo")
 
-grd_template4 <- raster::raster(xmn=bbox_xy["xmin"]-500, xmx=bbox_xy["xmax"]+1000,
+#     RasterLayer file
+grd_raster <- raster::raster(xmn=bbox_xy["xmin"]-500, xmx=bbox_xy["xmax"]+1000,
                                 ymn=bbox_xy["ymin"]-500, ymx=bbox_xy["ymax"]+1000,
                                 resolution=1000,
                                 crs=localcrs,
                                 vals=1)
 
+#     Let's see what they look like, and make sure they represent the same points
 ggplot() +
-  geom_point(data=grd_template, aes(x=X, y=Y)) +
-  geom_sf(data=grd_template2, shape="+", color="red", size=5) +
-  geom_sf(data=sf::st_as_sf(terra::as.points(grd_template3)), shape="o", size=6, color="green")
+  geom_point(data=grd_df, aes(x=X, y=Y)) +
+  geom_sf(data=grd_sf, shape="+", color="red", size=5) +
+  geom_sf(data=sf::st_as_sf(terra::as.points(grd_terra)), shape="o", size=6, color="green")
 
-#   I prefer the second method, since it creates a geographic object with an attached CRS,
-#   which is important. Keeping consistent coordinates is crucial.
+```
+
+A note on the displays. A useful trick I learned from a software vendor (Jason Geophysics)
+was to place the original data on top of the colored contour fill, and give both the same
+colormap and matching scale. In this way, the original data point will seem to disappear if 
+its value is close to the interpolated values around it. If the error is large, however, 
+then the point will stand out. It is a nice qualitative measure of the robustness of the
+interpolation, and can also provide insights into where things might be going wrong.
+
+Let's start with Inverse Distance Weighting, which is a pretty dumb algorithm, but for
+well-populated and fairly smooth input data can yield nice results. It is also fast and
+reasoonably intuitive.
+
+In this case it does a pretty crappy job, but this is a challenging dataset. In practice
+you might start by trying IDW, but after seeing the results give it up and move on to
+a more sophisticated algorithm.
+
+Note that the smoothing step I have shown is actually inappropriate for this data - I
+assume that the rainfall measurements are basically error-free. However, if you had a
+dataset where you knew that there was substantial error in some of the measurements, then 
+smoothing the fit might make a lot of sense. Especially if you are trying to see overall
+trends and not too interested in high resolution details that might be bogus anyway.
+Note that when smoothing, we lose the data on the edges due to the 1/2 width of the
+smoothing filter. Fortunately we built our grid with extra space around the edges.
+
+In geology, we consider two main sorts of surfaces - folded topographies and erosional 
+topographies. Folded systems we expect to be smoothly varying with no "bulls-eyes".
+But erosional surfaces might easily have abrupt changes, and in that case "bulls-eyes"
+are perfectly reasonable. In truth, this sort of rainfall - heavy rain from scattered
+individual thunderheads, should look more like the erosional model.
+
+
+```{r Inverse Distance Weighting}
 
 #     Create interpolator and interpolate to grid
 
@@ -812,58 +844,69 @@ ggplot() +
 fit_IDW <- gstat::gstat( 
   formula = Rain ~ 1,
   data = df_xy, 
-  #nmax = 10, nmin = 3,
-  set = list(idp = 2) # inverse distance power
+  #nmax = 10, nmin = 3, # can also limit the reach with these numbers
+  set = list(idp = 3) # inverse distance power
 )
 
-#   Use predict to apply the model fit to the grid
+#   Use predict to apply the model fit to the grid (using the data frame grid version)
 
-interp_IDW <- predict(fit_IDW, grd_template2)
+interp_IDW <- predict(fit_IDW, grd_sf)
+
+#   Convert to a stars object so we can use the contouring in stars
+interp_IDW_stars <- stars::st_rasterize(interp_IDW %>% dplyr::select(Rain=var1.pred, geometry))
 
 #   Quick sanity check, and can use to adjust the distance power
 #   Looks pretty good - most input points look close to the output
 #   grid points, with some notable exceptions. The red point to the north
 #   is probably bad data. Easier to judge from areal displays.
 ggplot() +
-  geom_sf(data=interp_IDW, aes(color=var1.pred), size=5) +
+  #   geom_stars is a good way to display a grid
+  stars::geom_stars(data=interp_IDW_stars) +  
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
-  scale_color_gradientn(colors=rainbow(5)) 
+  geom_sf(data=df_xy, color="Black", size=1) +
+  #     This is for the raster color fill
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  #     This is for the original data points
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3))
 
 #   Let's make some contours
 
-#   Convert to a stars object so we can use the contouring in stars
-interp_IDW_stars <- stars::st_rasterize(interp_IDW %>% dplyr::select(value=var1.pred, geometry))
 #   Make some pretty breaks for contour intervals based on the data
 brks <- classInt::classIntervals(pretty(n=10, x=as.vector(interp_IDW_stars[[1]])), n=8)
 #   Create contour lines
 Contours_IDW <- stars::st_contour(interp_IDW_stars, contour_lines=TRUE, breaks=brks$brks)
 #   Plot to see what it all looks like
 ggplot() +
-  geom_sf(data=interp_IDW, aes(color=var1.pred), size=5) +
+  stars::geom_stars(data=interp_IDW_stars) +  
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
-  scale_color_gradientn(colors=rainbow(5)) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
   geom_sf(data=Contours_IDW, color="red") 
   
 #   Hmmm.... could use some smoothing
 #   But stars does not have focal operations, so we go to terra?
 
 foo_terra <- terra::rast(interp_IDW_stars) 
+#   Let's do a 5x5 median followed by a 7x7 mean
 foo_sm <- terra::focal(terra::focal(foo_terra, w=5, fun=median), w=7, fun=mean)
 brks <- classInt::classIntervals(pretty(n=10, x=na.omit(as.vector(foo_sm[[1]]))), n=6)
 #   Create contours again
 Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE, breaks=brks$brks)
-#  One more step - let's smooth the contours
+#  One more step - let's smooth the contours themselves - really just aesthetically
+#  round off the pointy bits
 Contours_sm2 <- smoothr::smooth(Contours_sm, method="ksmooth", smoothness=2)
 
 #   and our final plot in X-Y space
 ggplot() +
-  geom_sf(data=interp_IDW, aes(color=var1.pred), size=5) +
+  stars::geom_stars(data=stars::st_as_stars(foo_sm) %>% rename(Rain=focal_mean)) +  
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
-  scale_color_gradientn(colors=rainbow(5)) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
   geom_sf(data=Contours_IDW, color="red") +
   geom_sf(data=Contours_sm, color="black", alpha=0.4) +
-  geom_sf(data=Contours_sm, color="black", alpha=0.4) +
-  geom_sf(data=Contours_sm2, color="blue", aes(fill=focal_mean), alpha=0.4) 
+  geom_sf(data=Contours_sm2, color="blue", alpha=0.4) 
 
 #   Now lets transform the contours to lat-long space and plot on the basemap
 
@@ -878,7 +921,6 @@ ggplot() +
   geom_sf(data=Contours_LL, 
           aes(fill=focal_mean), alpha=0.4) +
   colorspace::scale_fill_discrete_sequential(name = "Inches Rain") +
-
   #   Add a scale bar
   ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
     location="br", width_hint=0.2, bar_cols=1) +
@@ -934,7 +976,7 @@ lm.1 <- lm( f.1, data=df_xy_df)
 #   Use predict to apply the model fit to the grid
 #     This re-attaches X-Y coordinates to the predicted values so they can be made into a grid
 
-Poly_fit.1 <- sf::st_as_sf(bind_cols(grd_template,data.frame(var1.pred=predict(lm.1, grd_template))), crs=localcrs, coords=c("X", "Y"))
+Poly_fit.1 <- sf::st_as_sf(bind_cols(grd_df,data.frame(var1.pred=predict(lm.1, grd_df))), crs=localcrs, coords=c("X", "Y"))
 
 #   Convert to a stars object 
 Poly_fit_star.1 <- stars::st_rasterize(Poly_fit.1 %>% dplyr::select(value=var1.pred, geometry))
@@ -953,7 +995,7 @@ lm.2 <- lm( f.2, data=df_xy_df)
 #   Use predict to apply the model fit to the grid
 #     This re-attaches X-Y coordinates to the predicted values so they can be made into a grid
 
-Poly_fit.2 <- sf::st_as_sf(bind_cols(grd_template,data.frame(var1.pred=predict(lm.2, grd_template))), crs=localcrs, coords=c("X", "Y"))
+Poly_fit.2 <- sf::st_as_sf(bind_cols(grd_df,data.frame(var1.pred=predict(lm.2, grd_df))), crs=localcrs, coords=c("X", "Y"))
 
 #   Convert to a stars object 
 Poly_fit_star.2 <- stars::st_rasterize(Poly_fit.2 %>% dplyr::select(value=var1.pred, geometry))
@@ -997,11 +1039,11 @@ ggplot(var.smpl, aes(x = dist, y = gamma)) +
 # 
 # Krigged_grid <- gstat::krige(Rain ~ X + Y,
 #                              foo,
-#                              grd_template2,
+#                              grd_sf,
 #                              dat.fit)
 Krigged_grid <- gstat::krige(Detrended ~ 1,
                              trend,
-                             grd_template2,
+                             grd_sf,
                              dat.fit)
 Krigged_star <- stars::st_rasterize(Krigged_grid %>% dplyr::select(value=var1.pred, geometry))
 Krigged_starvar <- stars::st_rasterize(Krigged_grid %>% dplyr::select(value=var1.var, geometry))
@@ -1011,9 +1053,11 @@ Final_krige_star <- Krigged_star + Poly_fit_star.1
 #   and a nice plot, after some work
 
 ggplot() +
-  stars::geom_stars(data=Final_krige_star) +
+  #stars::geom_stars(data=Final_krige_star) +
+  geom_sf(data=sf::st_as_sf(Final_krige_star), aes(color=value), size=5) +
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
-  scale_color_gradientn(colors=rainbow(5)) 
+  scale_color_gradientn(colors=rainbow(5)) + 
+  geom_sf(data=df_xy, color="Black", size=1) 
 
 #   Let's make some contours
 
@@ -1103,8 +1147,8 @@ maxRain <- max(df_xy$Rain)*1.1 # allow a 10% overshoot from the actual data
 #   Sadly doesn't support sf, so we have to convert to a Spatial object
 Spline_grid <- interp::interp(x=sf::as_Spatial(df_xy),
                               z="Rain",
-                              xo= grd_template$X,
-                              yo= grd_template$Y,
+                              xo= grd_df$X,
+                              yo= grd_df$Y,
                               method="akima",
                               extrap=FALSE)
 
@@ -1149,13 +1193,10 @@ tweaking, not a bad result.
    x = as.matrix(as_tibble(sf::st_coordinates(df_xy))), # accepts points but expects them as matrix 
    Y = df_xy$Rain,  # the dependent variable 
    lambda = 0.0001,
-   miles = FALSE # EPSG 25833 is based in meters 
+   miles = FALSE # EPSG 26915 is based in meters 
  ) 
 
-interp_TPS <- raster::interpolate(grd_template4, fit_TPS)
-
-#   Convert to spatraster
-##interp_TPS <- terra::rast(interp_TPS)
+interp_TPS <- raster::interpolate(grd_raster, fit_TPS)
 
 #   Convert to a stars object so we can use the contouring in stars
 TPS_stars <- stars::st_as_stars(interp_TPS)
@@ -1166,10 +1207,13 @@ Contours_TPS <- stars::st_contour(TPS_stars, contour_lines=TRUE, breaks=brks$brk
 #   Plot to see what it all looks like
 #   and our final plot in X-Y space
 ggplot() +
-  geom_sf(data=sf::st_as_sf(TPS_stars), aes(color=layer), size=5) +
+  #stars::geom_stars(data=rename(TPS_stars, Rain=layer) %>% 
+  #                   mutate(Rain = if_else(between(Rain, 0, 3), Rain, NULL))) +
+  stars::geom_stars(data=rename(TPS_stars, Rain=layer)) +  
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
   geom_sf(data=df_xy, color="Black", size=1) +
-  scale_color_gradientn(colors=rainbow(5)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
   geom_sf(data=Contours_TPS, color="red") 
 ```
 
