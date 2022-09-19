@@ -813,7 +813,7 @@ interpolation, and can also provide insights into where things might be going wr
 
 Let's start with Inverse Distance Weighting, which is a pretty dumb algorithm, but for
 well-populated and fairly smooth input data can yield nice results. It is also fast and
-reasoonably intuitive.
+reasonably intuitive.
 
 In this case it does a pretty crappy job, but this is a challenging dataset. In practice
 you might start by trying IDW, but after seeing the results give it up and move on to
@@ -824,7 +824,7 @@ assume that the rainfall measurements are basically error-free. However, if you 
 dataset where you knew that there was substantial error in some of the measurements, then 
 smoothing the fit might make a lot of sense. Especially if you are trying to see overall
 trends and not too interested in high resolution details that might be bogus anyway.
-Note that when smoothing, we lose the data on the edges due to the 1/2 width of the
+Note that when smoothing, we lose the data on the edges due to the half-width of the
 smoothing filter. Fortunately we built our grid with extra space around the edges.
 
 In geology, we consider two main sorts of surfaces - folded topographies and erosional 
@@ -873,8 +873,11 @@ ggplot() +
 
 #   Make some pretty breaks for contour intervals based on the data
 brks <- classInt::classIntervals(pretty(n=10, x=as.vector(interp_IDW_stars[[1]])), n=8)
+#     Or define the breaks - we'll use these to have consistent contours between plots
+brks <- seq(from = 0, to = 3, by = 0.5)
 #   Create contour lines
-Contours_IDW <- stars::st_contour(interp_IDW_stars, contour_lines=TRUE, breaks=brks$brks)
+#Contours_IDW <- stars::st_contour(interp_IDW_stars, contour_lines=TRUE, breaks=brks$brks)
+Contours_IDW <- stars::st_contour(interp_IDW_stars, contour_lines=TRUE, breaks=brks)
 #   Plot to see what it all looks like
 ggplot() +
   stars::geom_stars(data=interp_IDW_stars) +  
@@ -888,11 +891,14 @@ ggplot() +
 #   But stars does not have focal operations, so we go to terra?
 
 foo_terra <- terra::rast(interp_IDW_stars) 
-#   Let's do a 5x5 median followed by a 7x7 mean
-foo_sm <- terra::focal(terra::focal(foo_terra, w=5, fun=median), w=7, fun=mean)
+#   Let's do a 3x3 mean
+foo_sm <- terra::focal(foo_terra, w=3, fun=mean)
 brks <- classInt::classIntervals(pretty(n=10, x=na.omit(as.vector(foo_sm[[1]]))), n=6)
+#     Or define the breaks
+brks <- seq(from = 0, to = 3, by = 0.5)
 #   Create contours again
-Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE, breaks=brks$brks)
+#Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE, breaks=brks$brks)
+Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE, breaks=brks)
 #  One more step - let's smooth the contours themselves - really just aesthetically
 #  round off the pointy bits
 Contours_sm2 <- smoothr::smooth(Contours_sm, method="ksmooth", smoothness=2)
@@ -903,10 +909,13 @@ ggplot() +
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
   geom_sf(data=df_xy, color="Black", size=1) +
   scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
-  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
   geom_sf(data=Contours_IDW, color="red") +
-  geom_sf(data=Contours_sm, color="black", alpha=0.4) +
-  geom_sf(data=Contours_sm2, color="blue", alpha=0.4) 
+  geom_sf(data=Contours_sm2, color="blue", alpha=0.0) +
+  annotate("text", label="C.I. = 0.5 inches of rain", x=bbox_xy[['xmin']]+5000, 
+                                              y=bbox_xy[['ymin']]-1000) +
+  labs(title="Final X-Y plot of Kriged data",
+       subtitle="Red contours are original, Blue are final, color fill is smoothed data.")
 
 #   Now lets transform the contours to lat-long space and plot on the basemap
 
@@ -930,6 +939,7 @@ ggplot() +
 
 #   Finally, let's do some checks on how well this procedure did.
 
+#############  @gimond
 # Leave-one-out validation routine
 npts <- length(sf::st_geometry(df_xy)) # number of points in sf object
 IDW.out <- vector(length = npts)
@@ -938,7 +948,7 @@ for (i in 1:npts) {
                            locations=df_xy[-i,], 
                            newdata=df_xy[i,], 
                            #nmax = 10, nmin = 3,
-                           idp=2.0)$var1.pred
+                           idp=3)$var1.pred
 }
 
 bind_cols(sf::st_drop_geometry(df_xy), as_tibble(IDW.out)) %>% 
@@ -953,6 +963,14 @@ bind_cols(sf::st_drop_geometry(df_xy), as_tibble(IDW.out)) %>%
 
 # Compute RMSE
 sqrt( sum((IDW.out - df_xy$Rain)^2) / npts)
+
+# Plot histograms of errors
+
+bind_cols(sf::st_drop_geometry(df_xy), as_tibble(IDW.out)) %>% 
+  rename(Observed=Rain, Predicted=value ) %>% 
+  mutate(Error = Predicted - Observed) %>% 
+  ggplot(aes(x=Error)) +
+    geom_histogram()
 
 ```
 
@@ -979,12 +997,16 @@ lm.1 <- lm( f.1, data=df_xy_df)
 Poly_fit.1 <- sf::st_as_sf(bind_cols(grd_df,data.frame(var1.pred=predict(lm.1, grd_df))), crs=localcrs, coords=c("X", "Y"))
 
 #   Convert to a stars object 
-Poly_fit_star.1 <- stars::st_rasterize(Poly_fit.1 %>% dplyr::select(value=var1.pred, geometry))
+Poly_fit_star.1 <- stars::st_rasterize(Poly_fit.1 %>% dplyr::select(Rain=var1.pred, geometry))
 
 ggplot() +
   stars::geom_stars(data=Poly_fit_star.1) +
-  geom_sf(data=df_xy, color="black", size=5) +
-  scale_fill_gradientn(colors=rainbow(5)) 
+  scale_fill_gradientn(colors=rainbow(5)) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=df_xy, color="Black", size=1)+ 
+  labs(title="Linear trend from rainfall data")
 
 # Now let's do a 2nd order polynomial       
 
@@ -998,17 +1020,21 @@ lm.2 <- lm( f.2, data=df_xy_df)
 Poly_fit.2 <- sf::st_as_sf(bind_cols(grd_df,data.frame(var1.pred=predict(lm.2, grd_df))), crs=localcrs, coords=c("X", "Y"))
 
 #   Convert to a stars object 
-Poly_fit_star.2 <- stars::st_rasterize(Poly_fit.2 %>% dplyr::select(value=var1.pred, geometry))
+Poly_fit_star.2 <- stars::st_rasterize(Poly_fit.2 %>% dplyr::select(Rain=var1.pred, geometry))
 
 ggplot() +
   stars::geom_stars(data=Poly_fit_star.2) +
-  geom_sf(data=df_xy, color="black", size=5) +
-  scale_fill_gradientn(colors=rainbow(5)) 
+  scale_fill_gradientn(colors=rainbow(5)) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=df_xy, color="Black", size=1)+ 
+  labs(title="Second order polynomial trend from rainfall data")
 
 #   A matter of judgement, but I think I like the first order fit better, so we'll go with it.
 #   First remove that fit from the input data
 
-trend <- bind_cols(predict(lm.1, as_tibble(sf::st_coordinates(df_xy))), 
+df_xy_res <- bind_cols(predict(lm.1, as_tibble(sf::st_coordinates(df_xy))), 
                 sf::st_coordinates(df_xy)) %>% 
   rename(Trend=1) %>%
   mutate(Trend=as.numeric(Trend)) %>% 
@@ -1019,7 +1045,7 @@ trend <- bind_cols(predict(lm.1, as_tibble(sf::st_coordinates(df_xy))),
 #   Let's look at the variogram
 
 var.smpl <- gstat::variogram(Detrended ~ 1, 
-                             data=trend)
+                             data=df_xy_res)
 # Compute the variogram model by passing the nugget, sill and range values
 # to fit.variogram() via the vgm() function.
 #                models are "Sph", "Exp", "Mat", and "Gau"
@@ -1030,7 +1056,8 @@ dat.fit  <- gstat::fit.variogram(var.smpl, fit.ranges = TRUE, fit.sills = TRUE,
 
 ggplot(var.smpl, aes(x = dist, y = gamma)) +
      geom_point() +
-     geom_line(data = gstat::variogramLine(dat.fit, maxdist = max(var.smpl$dist)))
+     geom_line(data = gstat::variogramLine(dat.fit, maxdist = max(var.smpl$dist))) +
+     labs(title="Variogram for detrended data")
 
 #   We have our model, so now let's use it
 
@@ -1042,22 +1069,39 @@ ggplot(var.smpl, aes(x = dist, y = gamma)) +
 #                              grd_sf,
 #                              dat.fit)
 Krigged_grid <- gstat::krige(Detrended ~ 1,
-                             trend,
+                             df_xy_res,
                              grd_sf,
                              dat.fit)
-Krigged_star <- stars::st_rasterize(Krigged_grid %>% dplyr::select(value=var1.pred, geometry))
-Krigged_starvar <- stars::st_rasterize(Krigged_grid %>% dplyr::select(value=var1.var, geometry))
+Krigged_star <- stars::st_rasterize(Krigged_grid %>% dplyr::select(Rain=var1.pred, geometry))
+#     Residuals
+ggplot() +
+  stars::geom_stars(data=Krigged_star) +
+  scale_fill_gradientn(colors=rainbow(5)) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  labs(title="Residuals from Kriging without drift")
 
+#   Variance
+Krigged_starvar <- stars::st_rasterize(Krigged_grid %>% dplyr::select(Rain_var=var1.var, geometry))
+#     Variance
+ggplot() +
+  stars::geom_stars(data=Krigged_starvar) +
+  scale_fill_gradientn(colors=rainbow(5)) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  labs(title="Variance from Kriging")
+
+#     Final grid - residuals plus drift
 Final_krige_star <- Krigged_star + Poly_fit_star.1
 
 #   and a nice plot, after some work
 
 ggplot() +
-  #stars::geom_stars(data=Final_krige_star) +
-  geom_sf(data=sf::st_as_sf(Final_krige_star), aes(color=value), size=5) +
+  stars::geom_stars(data=Final_krige_star) +
+  #geom_sf(data=sf::st_as_sf(Final_krige_star), aes(color=value), size=5) +
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
-  scale_color_gradientn(colors=rainbow(5)) + 
-  geom_sf(data=df_xy, color="Black", size=1) 
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  labs(title="Final Kriging result")
 
 #   Let's make some contours
 
@@ -1075,7 +1119,7 @@ ggplot() +
 #   But stars does not have focal operations, so we go to terra?
 
 foo_terra <- terra::rast(Final_krige_star) 
-foo_sm <- terra::focal(terra::focal(foo_terra, w=5, fun=median), w=7, fun=mean)
+foo_sm <- terra::focal(terra::focal(foo_terra, w=3, fun=median), w=5, fun=mean)
 brks <- classInt::classIntervals(pretty(n=10, x=na.omit(as.vector(foo_sm[[1]]))), n=6)
 #   Create contours again
 Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE, breaks=brks$brks)
