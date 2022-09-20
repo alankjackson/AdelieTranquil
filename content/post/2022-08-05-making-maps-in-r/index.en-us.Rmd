@@ -864,7 +864,7 @@ values and see what changes. This section was particularly inspired by @Dorman a
 
 ```{r validation and testing}
 
-Validate <- sf::st_as_sf(gstat::gstat.cv(fit_IDW))
+Validate <- sf::st_as_sf(gstat::gstat.cv(fit_IDW, debug.level=0))
 
 
 Validate %>% 
@@ -926,22 +926,22 @@ Validate %>%
 ```
 
 
-# ```{r temp, messages=FALSE, echo=FALSE}
+```{r temp, messages=FALSE, echo=FALSE}
 
-# df_temp <- as_tibble(replicate(3,sample(0:100,10,rep=TRUE))) %>% rename(x=1, y=2, z=3)
-# df_temp <- sf::st_as_sf(df_temp, coords=c("x", "y"), agr = "identity")
-# df_out <- sf::st_sfc(sf::st_point(c(50,50))) 
-# 
-# fit_IDW <- gstat::gstat( 
-#   formula = z ~ 1,
-#   data = df_temp, 
-#   set = list(idp = 1) 
-# )
-# 
-# interp_IDW <- predict(fit_IDW, df_out)
-# suppressMessages(interp_IDW <- predict(fit_IDW, df_out))
+df_temp <- as_tibble(replicate(3,sample(0:100,10,rep=TRUE))) %>% rename(x=1, y=2, z=3)
+df_temp <- sf::st_as_sf(df_temp, coords=c("x", "y"), agr = "identity")
+df_out <- sf::st_sfc(sf::st_point(c(50,50)))
 
-#```
+fit_IDW <- gstat::gstat(
+  formula = z ~ 1,
+  data = df_temp,
+  set = list(idp = 1)
+)
+
+interp_IDW <- predict(fit_IDW, df_out, debug.level = 0)
+#suppressMessages(interp_IDW <- predict(fit_IDW, df_out))
+
+```
 
 
 Now let's make some contours. I am avoiding using some contouring commands, because I
