@@ -14,10 +14,10 @@ bibliography: References.bib
 ```{r setup, include=FALSE}
 library(tidyverse)
 #library(sf)
-library(leaflet)
-library(leaflet.extras)
+#library(leaflet)
+#library(leaflet.extras)
 
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
 ```
 
 ##  Notes on how to make contour maps in R
@@ -817,22 +817,8 @@ reasonably intuitive.
 
 In this case it does a pretty crappy job, but this is a challenging dataset. In practice
 you might start by trying IDW, but after seeing the results give it up and move on to
-a more sophisticated algorithm.
-
-Note that the smoothing step I have shown is actually inappropriate for this data - I
-assume that the rainfall measurements are basically error-free. However, if you had a
-dataset where you knew that there was substantial error in some of the measurements, then 
-smoothing the fit might make a lot of sense. Especially if you are trying to see overall
-trends and not too interested in high resolution details that might be bogus anyway.
-Note that when smoothing, we lose the data on the edges due to the half-width of the
-smoothing filter. Fortunately we built our grid with extra space around the edges.
-
-In geology, we consider two main sorts of surfaces - folded topographies and erosional 
-topographies. Folded systems we expect to be smoothly varying with no "bulls-eyes".
-But erosional surfaces might easily have abrupt changes, and in that case "bulls-eyes"
-are perfectly reasonable. In truth, this sort of rainfall - heavy rain from scattered
-individual thunderheads, should look more like the erosional model.
-
+a more sophisticated algorithm. Later we will look at some ways to pick parameters for 
+the algorithm.
 
 ```{r Inverse Distance Weighting}
 
@@ -867,9 +853,106 @@ ggplot() +
   #     This is for the raster color fill
   scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
   #     This is for the original data points
-  scale_color_gradientn(colors=rainbow(5), limits=c(0,3))
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  labs(title="Inverse Distance Weighting, Power = 3")
 
-#   Let's make some contours
+```
+
+How do we decide to use any particular power for the weighting? Let's try a number of
+values and see what changes. This section was particularly inspired by @Dorman and @Gimond.
+
+
+```{r validation and testing}
+
+Validate <- sf::st_as_sf(gstat::gstat.cv(fit_IDW))
+
+
+Validate %>% 
+  rename(Observed=observed, Predicted=var1.pred ) %>% 
+  ggplot(aes(x=Observed, y=Predicted)) + 
+    geom_point() +
+    geom_smooth(method='lm') +
+    geom_abline(intercept=0, slope=1, color="red", linetype="dashed") +
+    labs(title="Leave-one-out Validation",
+         x="Observed (inches)",
+         y="Predicted (inches)")
+
+#   Do a leave-one-out analysis for a variety of weighting powers
+Validate <- NULL
+for (power in (1:6)*0.5) {
+  my_fit <- gstat::gstat(formula = Rain ~ 1, data = df_xy,  set = list(idp = power))
+  foo <- sf::st_as_sf(gstat::gstat.cv(my_fit)) %>% 
+    rename(Observed=observed, Predicted=var1.pred ) %>% 
+    mutate(power=power) 
+  
+  Validate <- bind_rows(Validate, foo)
+}
+
+Validate %>% 
+  ggplot(aes(x=Observed, y=Predicted)) + 
+    geom_point() +
+    geom_smooth(method='lm') +
+    geom_abline(intercept=0, slope=1, color="red", linetype="dashed") +
+    facet_wrap(vars(power)) +
+    labs(title="Leave-one-out Validation",
+         x="Observed (inches)",
+         y="Predicted (inches)")
+
+#     Root mean square error
+
+RMS <- Validate %>% 
+  group_by(power) %>% 
+  summarise(RMS=sqrt(sum((Predicted-Observed)^2) / n()))
+
+RMS %>% 
+  ggplot(aes(x=power, y=RMS)) +
+    geom_point() +
+    geom_smooth() +
+    labs(title="RMS Error vs. Inverse Distance Weighting Power")
+
+#     Let's look at the optimal RMS on a map
+#bind_cols(sf::st_drop_geometry(Validate), as_tibble(sf::st_coordinates(Validate)))  
+Validate %>% 
+  filter(power==1.5) %>% 
+    mutate(Difference=Predicted-Observed) %>% 
+  ggplot() +
+    geom_sf(aes(size=abs(Difference), color=Difference)) +
+    scale_size_continuous(range=c(1,12)) +
+  #scale_color_gradientn(colors=rainbow(5), limits=c(-2,2)) 
+    colorspace::scale_color_continuous_diverging(palette = "Blue-Red 3")
+    #viridis::scale_color_viridis()
+  
+
+```
+
+
+# ```{r temp, messages=FALSE, echo=FALSE}
+
+# df_temp <- as_tibble(replicate(3,sample(0:100,10,rep=TRUE))) %>% rename(x=1, y=2, z=3)
+# df_temp <- sf::st_as_sf(df_temp, coords=c("x", "y"), agr = "identity")
+# df_out <- sf::st_sfc(sf::st_point(c(50,50))) 
+# 
+# fit_IDW <- gstat::gstat( 
+#   formula = z ~ 1,
+#   data = df_temp, 
+#   set = list(idp = 1) 
+# )
+# 
+# interp_IDW <- predict(fit_IDW, df_out)
+# suppressMessages(interp_IDW <- predict(fit_IDW, df_out))
+
+#```
+
+
+Now let's make some contours. I am avoiding using some contouring commands, because I
+want to be able to treat the contours as lines, and convert them from X-Y coordinates
+back into Lat-Long coordinates to place on top of the basemap.
+
+The first method for defining breaks is pretty nice for quickly making good-looking breaks, but
+has the disadvantages that you don't know what number the contours represent, and also if you
+need to compare several plots, the contour breaks may change between plots. 
+
+```{r IDW contours}
 
 #   Make some pretty breaks for contour intervals based on the data
 brks <- classInt::classIntervals(pretty(n=10, x=as.vector(interp_IDW_stars[[1]])), n=8)
@@ -885,20 +968,74 @@ ggplot() +
   geom_sf(data=df_xy, color="Black", size=1) +
   scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
   scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
-  geom_sf(data=Contours_IDW, color="red") 
+  geom_sf(data=Contours_IDW, color="black") 
+
+```
+
+
+Let's divert briefly to look at another way to plot filled contours. There is a package,
+metR from @Campitelli which consists of ggplot extensions. The contour and filled contour
+functions are particularly nice, although I think I prefer putting the stars grid behind
+the contours to show the changes between contour lines. But the nicest bit is that
+metR::geom_contour2 will label contours - which is frankly pretty awesome.
+
+Of course there are always competing desires. I like to stay as mainstream as I can, so that
+old code doesn't break when a specialty package loses support and gets bit rot. On the 
+other hand, some added functionality is so nice that it is hard to resist.
+
+
+```{r test metR}
+
+ggplot() +
+  #   geom_stars will display the full grid variation, geom_contour_fill will fill
+  #   between the contours with a constant hue.
+  stars::geom_stars(data=interp_IDW_stars) +  
+  # metR::geom_contour_fill(data=as_tibble(interp_IDW_stars), 
+  #                         aes(x=x, y=y, z=Rain),
+  #                         breaks=brks,
+  #                         show.legend = FALSE) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  #     data expected to be a tibble-like object
+  metR::geom_contour2(data=as_tibble(interp_IDW_stars),
+                      aes(x=x, y=y, z=Rain, label=stat(level)),
+                      breaks=brks, color="black")+
+  geom_sf(data=df_xy, color="Black", size=1) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) 
   
+```
+
+
+##        Smoothing grids and contours
+
+Note that the smoothing step I have shown is actually inappropriate for this data - I
+assume that the rainfall measurements are basically error-free. However, if you had a
+dataset where you knew that there was substantial error in some of the measurements, then 
+smoothing the fit might make a lot of sense. Especially if you are trying to see overall
+trends and not too interested in high resolution details that might be bogus anyway.
+Note that when smoothing, we lose the data on the edges due to the half-width of the
+smoothing filter. Fortunately we built our grid with extra space around the edges.
+
+In geology, we consider two main sorts of surfaces - folded topographies and erosional 
+topographies. Folded systems we expect to be smoothly varying with no "bulls-eyes".
+But erosional surfaces might easily have abrupt changes, and in that case "bulls-eyes"
+are perfectly reasonable. In truth, this sort of rainfall - heavy rain from scattered
+individual thunderheads, should look more like the erosional model.
+
+
+
+```{r smoothing}
+
+
 #   Hmmm.... could use some smoothing
 #   But stars does not have focal operations, so we go to terra?
 
 foo_terra <- terra::rast(interp_IDW_stars) 
 #   Let's do a 3x3 mean
 foo_sm <- terra::focal(foo_terra, w=3, fun=mean)
-brks <- classInt::classIntervals(pretty(n=10, x=na.omit(as.vector(foo_sm[[1]]))), n=6)
-#     Or define the breaks
-brks <- seq(from = 0, to = 3, by = 0.5)
 #   Create contours again
 #Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE, breaks=brks$brks)
-Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE, breaks=brks)
+Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=TRUE, breaks=brks)
 #  One more step - let's smooth the contours themselves - really just aesthetically
 #  round off the pointy bits
 Contours_sm2 <- smoothr::smooth(Contours_sm, method="ksmooth", smoothness=2)
@@ -911,25 +1048,41 @@ ggplot() +
   scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
   scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
   geom_sf(data=Contours_IDW, color="red") +
-  geom_sf(data=Contours_sm2, color="blue", alpha=0.0) +
+  geom_sf(data=Contours_sm2, color="blue") +
   annotate("text", label="C.I. = 0.5 inches of rain", x=bbox_xy[['xmin']]+5000, 
                                               y=bbox_xy[['ymin']]-1000) +
-  labs(title="Final X-Y plot of Kriged data",
+  labs(title="Final X-Y plot of Inverse Weighted data",
        subtitle="Red contours are original, Blue are final, color fill is smoothed data.")
+```
 
-#   Now lets transform the contours to lat-long space and plot on the basemap
+Now let's transfporm our contours to lat-long and plot
+
+```{r xform to LL}
+
+
+#   Now lets transform the contours & grid to lat-long space and plot on the basemap
 
 Contours_LL <- sf::st_transform(Contours_sm, crs=googlecrs) 
+foo_sm_star_LL <- sf::st_transform(stars::st_as_stars(foo_sm) %>% rename(Rain=focal_mean),
+                                   crs=googlecrs)
 
 ggplot() +
   #   this is the best looking basemap
   Basemap_3 +
+  #   Gridded data
+  stars::geom_stars(data=foo_sm_star_LL, alpha=0.4) +  
   #   Add points
   geom_sf(data=df_sf) +
   #   Create filled density "contours" 
-  geom_sf(data=Contours_LL, 
-          aes(fill=focal_mean), alpha=0.4) +
-  colorspace::scale_fill_discrete_sequential(name = "Inches Rain") +
+  # geom_sf(data=Contours_LL, 
+  #         aes(fill=focal_mean), alpha=0.4, na.value="transparent") +
+  # colorspace::scale_fill_discrete_sequential(name = "Inches Rain",
+  #                                            palette="Blues 3") +
+  geom_sf(data=Contours_LL, color="black") +
+  #scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  #scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
+  #scale_fill_gradientn(palette="Blue 3", limits=c(0,3), na.value="transparent") +
+  scale_fill_viridis_c(direction=-1, alpha=0.4) +
   #   Add a scale bar
   ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
     location="br", width_hint=0.2, bar_cols=1) +
