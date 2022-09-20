@@ -20,3 +20,4 @@ netlify.toml
 .Rproj.user_old
 README
 .Rprofile
+.hugo_build.lock
