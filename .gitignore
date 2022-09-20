@@ -18,3 +18,5 @@ keepold.RData
 netlify.toml
 .Rproj.user_lessold
 .Rproj.user_old
+README
+.Rprofile
