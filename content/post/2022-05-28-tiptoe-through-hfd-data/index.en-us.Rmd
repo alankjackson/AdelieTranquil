@@ -1,15 +1,14 @@
 ---
-title: Tiptoe Through the Houston Fire Department Data
-author: Alan Jackson
-date: '2022-05-28'
+title: "Tiptoe Through the Houston Fire Department Data"
+author: "Alan Jackson"
+date: "2022-05-28"
 slug: '[tiptoe_through_HFD_data]'
-categories:
-  - Emergency
+categories: 
+- Emergency
 tags:
-  - Houston
-  - Mapping
-keywords:
-  - tech
+- Houston
+- Mapping
+keywords: tech
 ---
 
 ```{r setup, include=FALSE}
@@ -96,6 +95,11 @@ df_sum <- df %>%
     summarize(num=n())
 
 ```
+
+
+Words and more words
+
+
 
 ```{r coordinates}
 
