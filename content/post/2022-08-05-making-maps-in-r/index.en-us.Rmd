@@ -13,11 +13,8 @@ bibliography: References.bib
 
 ```{r setup, include=FALSE}
 library(tidyverse)
-#library(sf)
-#library(leaflet)
-#library(leaflet.extras)
 
-knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(echo = TRUE, warning=TRUE, message=TRUE)
 ```
 
 ##  Notes on how to make contour maps in R
@@ -228,7 +225,7 @@ As far as I can tell, the only package that will allow for a projected basemap
 
 There is also quite a bit of disparity in the size of the map objects. 
 
-```{r size table, echo=FALSE, results='asis'}
+```{r size_table, echo=FALSE, results='asis'}
 Basemap_size <- tribble( ~Package, ~Size_KB,
                          "OpenStreetMap", 6600,
                          "basemaps", 4.7,
@@ -238,66 +235,93 @@ knitr::kable(Basemap_size, caption="Sizes in KB for different map objects")
 
 ```
 
+Let's start downloading basemaps. They are relatively large and we want to be kind to
+the servers, so we will cache them so we don't need to download more than once.
 
-```{r basemaps OpenStreetMap, warning=FALSE, message=FALSE, cache=TRUE}
+First we use OpenStreetMap::openmap
 
-########  package: OpenStreetMap
-# Produces an OpenStreetMap object
-Basemap_1 <- OpenStreetMap::openmap(c(bbox[["ymin"]],
-                                    bbox[["xmin"]]),
-                                  c(bbox[["ymax"]],
-                                    bbox[["xmax"]]),
-                                  type="osm")
+```{r basemaps OpenStreetMap, warning=TRUE, message=TRUE}
+
+# Produces an OpenStreetMap object (and caches it)
+Base_osm <- xfun::cache_rds({
+  Base_osm <- OpenStreetMap::openmap(c(bbox[["ymin"]],
+                                        bbox[["xmin"]]),
+                                      c(bbox[["ymax"]],
+                                        bbox[["xmax"]]),
+                                      type="osm")
+})
 ```
 
-```{r basemaps basemaps, warning=FALSE, message=FALSE, cache=TRUE}
-########  package: basemaps
+Now let's use basemaps::basemap_ggplot
+
+```{r basemaps basemaps, warning=TRUE, message=TRUE}
+# Produces a ggplot object (and caches it)
+Base_basemaps <- xfun::cache_rds({
+  basemaps::set_defaults(map_service = "osm", map_type = "streets")
+  Base_basemaps <- basemaps::basemap_ggplot(ext=bbox, verbose=FALSE)
+})
+```
+
+Now we download using basemapR::base_map
+
+```{r basemaps basemapR, warning=TRUE, message=TRUE}
 # Produces a ggplot object
-basemaps::set_defaults(map_service = "osm", map_type = "streets")
-Basemap_2 <- basemaps::basemap_ggplot(ext=bbox)
+Base_basemapR <- xfun::cache_rds({
+  Base_basemapR <- basemapR::base_map(bbox, basemap="mapnik", increase_zoom=2)
+})
 ```
 
-```{r basemaps basemapR, warning=FALSE, message=FALSE, cache=TRUE}
-########  package: basemapR
+And last but not least, download using ggspatial::annotation_map_tile
+
+```{r basemaps ggspatial, warning=TRUE, message=TRUE}
 # Produces a ggplot object
-Basemap_3 <- basemapR::base_map(bbox, basemap="mapnik", increase_zoom=2)
+Base_ggspatial <- xfun::cache_rds({
+  Base_ggspatial <- ggplot(df_sf) + ggspatial::annotation_map_tile(zoomin=-1) 
+})
 ```
 
-```{r basemaps ggspatial, warning=FALSE, message=FALSE, cache=TRUE}
-########  package: ggspatial
-# Produces a ggplot object
-Basemap_4 <- ggplot(df_sf) + ggspatial::annotation_map_tile(zoomin=-1) 
-```
+So now let's create actual plots and look at the different basemaps
 
-```{r basemaps plots, warning=FALSE, message=FALSE}
+```{r basemaps_plots, warning=TRUE, message=TRUE}
 # ---------------------   Let's plot the maps, with some data if possible
 
+print("--1--")
 #   Plot in projected coordinates, but be careful!
-m1 <- OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Basemap_1,
+m1 <- OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Base_osm,
                                       projection=localcrs)) +
   geom_point(data=as_tibble(sf::st_coordinates(df_xy)), aes(x=X, y=Y))
 #   Plot in Lat Long (Scale coordinates to act like lat-long )
-m2 <- OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Basemap_1),
+print("--2--")
+m2 <- OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Base_osm),
                                       projection=googlecrs) +
   geom_point(data=df, aes(y=Lat, x=Lon))
   
-m3 <- Basemap_2 +
+print("--3--")
+m3 <- Base_basemaps +
   geom_sf(data=df_web)
   
 #   This is the best looking one.
+print("--4--")
 m4 <- df_sf %>% ggplot() +
-  Basemap_3 +
+  Base_basemapR +
   geom_sf()
 
-m5 <- Basemap_4 +
+print("--5--")
+m5 <- Base_ggspatial +
     geom_sf(inherit.aes = FALSE) +
     theme_minimal()
 
+print("--6--")
 m1
+print("--7--")
 m2
+print("--8--")
 m3
+print("--9--")
 m4
+print("--10--")
 m5
+print("--11--")
 
 ```
 
@@ -315,7 +339,7 @@ allow. So there are some clear advantages to using a vector map. Probably not wh
 for a quick and dirty, but if you plane to be working in the same area for some time, it is
 probably worth spending the effort to tweak up a pretty vector-based map.
 
-```{r size table2, echo=FALSE, results='asis'}
+```{r size_table2, echo=FALSE, results='asis'}
 Basemap_size2 <- tribble( ~Package, ~Size_KB,
                          "Big Streets", 47.4,
                          "Medium Streets", 99.0,
@@ -326,7 +350,7 @@ knitr::kable(Basemap_size2, caption="Sizes in KB for different map objects")
 ```
 
 
-```{r basemaps_2, warning=FALSE, message=FALSE, cache=TRUE}
+```{r basemaps_2, warning=TRUE, message=TRUE}
 
 ###########   Now for something different, let's create a map with vectors
 ###########   by using osmdata 
@@ -336,44 +360,52 @@ osmdata::available_tags("highway")
 
 
 #     pull out the "big streets"
-big_streets <- 
-  tmaptools::bb(bbox, output="matrix") %>% # turn bounding box into matrix
-  osmdata::opq()%>% # Build query
-  osmdata::add_osm_feature(key = "highway", 
-                  value = c("motorway", 
-                            "motorway_link" 
-                            )) %>% # select the big roads
-  osmdata::osmdata_sf() # turn into an sf file
+big_streets <- xfun::cache_rds({
+  big_streets <- 
+    tmaptools::bb(bbox, output="matrix") %>% # turn bounding box into matrix
+    osmdata::opq()%>% # Build query
+    osmdata::add_osm_feature(key = "highway", 
+                    value = c("motorway", 
+                              "motorway_link" 
+                              )) %>% # select the big roads
+    osmdata::osmdata_sf() # turn into an sf file
+})
   
 
 #     pull out the "medium streets"
-med_streets <- 
-  tmaptools::bb(bbox, output="matrix") %>%  # turn bounding box into matrix
-  osmdata::opq()%>%  #   Build query
-  osmdata::add_osm_feature(key = "highway", 
-                  value = c( "secondary_link",
-                            "secondary")) %>%  #   Grab smaller roads
-  osmdata::osmdata_sf() #   Make sf
+med_streets <- xfun::cache_rds({
+  med_streets <- 
+    tmaptools::bb(bbox, output="matrix") %>%  # turn bounding box into matrix
+    osmdata::opq()%>%  #   Build query
+    osmdata::add_osm_feature(key = "highway", 
+                    value = c( "secondary_link",
+                              "secondary")) %>%  #   Grab smaller roads
+    osmdata::osmdata_sf() #   Make sf
+})
 
 #   Now get rivers
 osmdata::available_tags("waterway")
 osmdata::available_tags("water")
 
-river <- tmaptools::bb(bbox, output="matrix") %>%
-  osmdata::opq()%>%
-  osmdata::add_osm_feature(key = "waterway", value = "river") %>%
-  osmdata::osmdata_sf()  
+river <- xfun::cache_rds({
+  river <- tmaptools::bb(bbox, output="matrix") %>%
+    osmdata::opq()%>%
+    osmdata::add_osm_feature(key = "waterway", value = "river") %>%
+    osmdata::osmdata_sf()  
+})
 
-lakes <- tmaptools::bb(bbox, output="matrix") %>%
-  osmdata::opq()%>%
-  osmdata::add_osm_feature(key = "water", value = c("reservoir",
-                                                    "lake",
-                                                    "basin",
-                                                    "pond")) %>%
-  osmdata::osmdata_sf() 
+lakes <- xfun::cache_rds({
+  lakes <- tmaptools::bb(bbox, output="matrix") %>%
+    osmdata::opq()%>%
+    osmdata::add_osm_feature(key = "water", value = c("reservoir",
+                                                      "lake",
+                                                      "basin",
+                                                      "pond")) %>%
+    osmdata::osmdata_sf() 
+})
 ```
 
-```{r basemaps vector plot, warning=FALSE, message=FALSE}
+```{r basemaps_vector_plot, warning=TRUE, message=TRUE}
 #   Now put it all together and make a plot
 
 m6 <- ggplot() +
@@ -560,7 +592,7 @@ helpful.
 m1 <- 
 ggplot(df_sf) +
   #   this is the best looking basemap
-  Basemap_3 +
+  Base_basemapR +
   #   Add points
   geom_sf(inherit.aes = FALSE) +
   #   Create filled density "contours" - the as.numeric converts from factor
@@ -604,7 +636,7 @@ Sta_den <- eks::st_kde(df_sf) # calculate density
 m2 <- 
   ggplot() +
   #   this is the best looking basemap
-  Basemap_3 +
+  Base_basemapR +
   #   Add points
   geom_sf(data=df_sf) +
   #   Create filled density "contours" 
@@ -653,7 +685,7 @@ leaflet::leaflet() %>%
 contours <- eks::st_get_contour(Sta_den, cont=c(20,40,60,80)) %>% 
   mutate(value=as.numeric(levels(contlabel)))
 
-pal_fun <- colorQuantile("YlOrRd", NULL, n = 5)
+pal_fun <- leaflet::colorQuantile("YlOrRd", NULL, n = 5)
 
 p_popup <- paste("Density", as.numeric(levels(contours$contlabel)), "%")
 
@@ -836,7 +868,7 @@ fit_IDW <- gstat::gstat(
 
 #   Use predict to apply the model fit to the grid (using the data frame grid version)
 
-interp_IDW <- predict(fit_IDW, grd_sf)
+interp_IDW <- predict(fit_IDW, grd_sf, debug.level=0)
 
 #   Convert to a stars object so we can use the contouring in stars
 interp_IDW_stars <- stars::st_rasterize(interp_IDW %>% dplyr::select(Rain=var1.pred, geometry))
@@ -864,7 +896,7 @@ values and see what changes. This section was particularly inspired by @Dorman a
 
 ```{r validation and testing}
 
-Validate <- sf::st_as_sf(gstat::gstat.cv(fit_IDW, debug.level=0))
+Validate <- sf::st_as_sf(gstat::gstat.cv(fit_IDW, debug.level=0, verbose=FALSE))
 
 
 Validate %>% 
@@ -881,7 +913,7 @@ Validate %>%
 Validate <- NULL
 for (power in (1:6)*0.5) {
   my_fit <- gstat::gstat(formula = Rain ~ 1, data = df_xy,  set = list(idp = power))
-  foo <- sf::st_as_sf(gstat::gstat.cv(my_fit)) %>% 
+  foo <- sf::st_as_sf(gstat::gstat.cv(my_fit, debug.level=0, verbose=FALSE)) %>% 
     rename(Observed=observed, Predicted=var1.pred ) %>% 
     mutate(power=power) 
   
@@ -926,22 +958,22 @@ Validate %>%
 ```
 
 
-```{r temp, messages=FALSE, echo=FALSE}
+<!--  ```{r temp, messages=FALSE, echo=FALSE} -->
 
-df_temp <- as_tibble(replicate(3,sample(0:100,10,rep=TRUE))) %>% rename(x=1, y=2, z=3)
-df_temp <- sf::st_as_sf(df_temp, coords=c("x", "y"), agr = "identity")
-df_out <- sf::st_sfc(sf::st_point(c(50,50)))
+<!-- df_temp <- as_tibble(replicate(3,sample(0:100,10,rep=TRUE))) %>% rename(x=1, y=2, z=3) -->
+<!-- df_temp <- sf::st_as_sf(df_temp, coords=c("x", "y"), agr = "identity") -->
+<!-- df_out <- sf::st_sfc(sf::st_point(c(50,50))) -->
 
-fit_IDW <- gstat::gstat(
-  formula = z ~ 1,
-  data = df_temp,
-  set = list(idp = 1)
-)
+<!-- fit_IDW <- gstat::gstat( -->
+<!--   formula = z ~ 1, -->
+<!--   data = df_temp, -->
+<!--   set = list(idp = 1) -->
+<!-- ) -->
 
-interp_IDW <- predict(fit_IDW, df_out, debug.level = 0)
-#suppressMessages(interp_IDW <- predict(fit_IDW, df_out))
+<!-- interp_IDW <- predict(fit_IDW, df_out, debug.level = 0) -->
+<!-- #suppressMessages(interp_IDW <- predict(fit_IDW, df_out)) -->
 
-```
+<!--  ``` -->
 
 
 Now let's make some contours. I am avoiding using some contouring commands, because I
@@ -1055,7 +1087,7 @@ ggplot() +
        subtitle="Red contours are original, Blue are final, color fill is smoothed data.")
 ```
 
-Now let's transfporm our contours to lat-long and plot
+Now let's transform our contours to lat-long and plot
 
 ```{r xform to LL}
 
@@ -1068,7 +1100,7 @@ foo_sm_star_LL <- sf::st_transform(stars::st_as_stars(foo_sm) %>% rename(Rain=fo
 
 ggplot() +
   #   this is the best looking basemap
-  Basemap_3 +
+  Base_basemapR +
   #   Gridded data
   stars::geom_stars(data=foo_sm_star_LL, alpha=0.4) +  
   #   Add points
@@ -1100,6 +1132,7 @@ for (i in 1:npts) {
   IDW.out[i] <- gstat::idw(formula=Rain ~ 1, 
                            locations=df_xy[-i,], 
                            newdata=df_xy[i,], 
+                           debug.level=0,
                            #nmax = 10, nmin = 3,
                            idp=3)$var1.pred
 }
@@ -1203,6 +1236,7 @@ var.smpl <- gstat::variogram(Detrended ~ 1,
 # to fit.variogram() via the vgm() function.
 #                models are "Sph", "Exp", "Mat", and "Gau"
 dat.fit  <- gstat::fit.variogram(var.smpl, fit.ranges = TRUE, fit.sills = TRUE,
+                                 debug.level = 0,
                           gstat::vgm(psill=NA, model="Exp", range=NA, nugget=0))
 
 ##plot(var.smpl, dat.fit, xlim=c(0,30000))
@@ -1224,6 +1258,7 @@ ggplot(var.smpl, aes(x = dist, y = gamma)) +
 Krigged_grid <- gstat::krige(Detrended ~ 1,
                              df_xy_res,
                              grd_sf,
+                             debug.level=0,
                              dat.fit)
 Krigged_star <- stars::st_rasterize(Krigged_grid %>% dplyr::select(Rain=var1.pred, geometry))
 #     Residuals
@@ -1295,7 +1330,7 @@ Contours_LL <- sf::st_transform(Contours_sm, crs=googlecrs)
 
 ggplot() +
   #   this is the best looking basemap
-  Basemap_3 +
+  Base_basemapR +
   #   Add points
   geom_sf(data=df_sf) +
   #   Create filled density "contours" 
