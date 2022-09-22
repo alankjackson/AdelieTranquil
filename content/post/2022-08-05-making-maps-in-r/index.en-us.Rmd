@@ -14,7 +14,7 @@ bibliography: References.bib
 ```{r setup, include=FALSE}
 library(tidyverse)
 
-knitr::opts_chunk$set(echo = TRUE, warning=TRUE, message=TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
 ```
 
 ##  Notes on how to make contour maps in R
@@ -227,7 +227,7 @@ There is also quite a bit of disparity in the size of the map objects.
 
 ```{r size_table, echo=FALSE, results='asis'}
 Basemap_size <- tribble( ~Package, ~Size_KB,
-                         "OpenStreetMap", 6600,
+                         "OpenStreetMap", 7800,
                          "basemaps", 4.7,
                          "basemapR", 4.4,
                          "ggspatial", 34.0)
@@ -240,90 +240,82 @@ the servers, so we will cache them so we don't need to download more than once.
 
 First we use OpenStreetMap::openmap
 
-```{r basemaps OpenStreetMap, warning=TRUE, message=TRUE}
+```{r basemaps_OpenStreetMap, cache=TRUE}
 
 # Produces an OpenStreetMap object (and caches it)
-Base_osm <- xfun::cache_rds({
-  Base_osm <- OpenStreetMap::openmap(c(bbox[["ymin"]],
-                                        bbox[["xmin"]]),
-                                      c(bbox[["ymax"]],
-                                        bbox[["xmax"]]),
-                                      type="osm")
-})
+Base_osm <- OpenStreetMap::openmap(c(bbox[["ymin"]],
+                                      bbox[["xmin"]]),
+                                    c(bbox[["ymax"]],
+                                      bbox[["xmax"]]),
+                                    type="osm")
 ```
 
 Now let's use basemaps::basemap_ggplot
 
-```{r basemaps basemaps, warning=TRUE, message=TRUE}
+```{r basemaps_basemaps, cache=TRUE}
 # Produces a ggplot object (and caches it)
-Base_basemaps <- xfun::cache_rds({
-  basemaps::set_defaults(map_service = "osm", map_type = "streets")
-  Base_basemaps <- basemaps::basemap_ggplot(ext=bbox, verbose=FALSE)
-})
+#Base_basemaps <- xfun::cache_rds({
+basemaps::set_defaults(map_service = "osm", map_type = "streets")
+Base_basemaps <-  basemaps::basemap_ggplot(ext=bbox, verbose=FALSE)
+#  Base_basemaps
+#})
 ```
 
 Now we download using basemapR::base_map
 
-```{r basemaps basemapR, warning=TRUE, message=TRUE}
+```{r basemaps_basemapR, cache=TRUE}
 # Produces a ggplot object
-Base_basemapR <- xfun::cache_rds({
   Base_basemapR <- basemapR::base_map(bbox, basemap="mapnik", increase_zoom=2)
-})
 ```
 
 And last but not least, download using ggspatial::annotation_map_tile
 
-```{r basemaps ggspatial, warning=TRUE, message=TRUE}
+```{r basemaps_ggspatial, cache=TRUE}
 # Produces a ggplot object
-Base_ggspatial <- xfun::cache_rds({
+#Base_ggspatial <- xfun::cache_rds({
   Base_ggspatial <- ggplot(df_sf) + ggspatial::annotation_map_tile(zoomin=-1) 
-})
+#  Base_ggspatial
+#})
 ```
 
 So now let's create actual plots and look at the different basemaps
 
-```{r basemaps_plots, warning=TRUE, message=TRUE}
+```{r basemaps_plots, warning=FALSE, message=FALSE}
 # ---------------------   Let's plot the maps, with some data if possible
 
-print("--1--")
 #   Plot in projected coordinates, but be careful!
 m1 <- OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Base_osm,
                                       projection=localcrs)) +
   geom_point(data=as_tibble(sf::st_coordinates(df_xy)), aes(x=X, y=Y))
 #   Plot in Lat Long (Scale coordinates to act like lat-long )
-print("--2--")
-m2 <- OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Base_osm),
-                                      projection=googlecrs) +
-  geom_point(data=df, aes(y=Lat, x=Lon))
-  
-print("--3--")
+ m2 <- OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Base_osm),
+                                       projection=googlecrs) +
+   geom_point(data=df, aes(y=Lat, x=Lon))
+
 m3 <- Base_basemaps +
   geom_sf(data=df_web)
-  
+
 #   This is the best looking one.
-print("--4--")
 m4 <- df_sf %>% ggplot() +
   Base_basemapR +
   geom_sf()
 
-print("--5--")
 m5 <- Base_ggspatial +
     geom_sf(inherit.aes = FALSE) +
     theme_minimal()
 
-print("--6--")
 m1
-print("--7--")
 m2
-print("--8--")
 m3
-print("--9--")
 m4
-print("--10--")
 m5
-print("--11--")
 
 ```
+
+
+<!-- ```{r stop} -->
+<!-- knitr::knit_exit() -->
+<!-- ``` -->
 
 ###  One more basemap, but this one built with vectors, not rasters
 
@@ -350,13 +342,13 @@ knitr::kable(Basemap_size2, caption="Sizes in KB for different map objects")
 ```
 
 
-```{r basemaps_2, warning=TRUE, message=TRUE}
+```{r basemaps_2, warning=TRUE, message=TRUE, cache=TRUE}
 
 ###########   Now for something different, let's create a map with vectors
 ###########   by using osmdata 
 
-osmdata::available_features()
-osmdata::available_tags("highway")
+osmdata::available_features() %>% head()
+osmdata::available_tags("highway") %>% head()
 
 
 #     pull out the "big streets"
@@ -384,8 +376,8 @@ med_streets <- xfun::cache_rds({
 })
 
 #   Now get rivers
-osmdata::available_tags("waterway")
-osmdata::available_tags("water")
+osmdata::available_tags("waterway") %>% head()
+osmdata::available_tags("water") %>% head()
 
 river <- xfun::cache_rds({
   river <- tmaptools::bb(bbox, output="matrix") %>%
@@ -405,7 +397,7 @@ lakes <- xfun::cache_rds({
 })
 ```
 
-```{r basemaps_vector_plot, warning=TRUE, message=TRUE}
+```{r basemaps_vector_plot, warning=FALSE, message=FALSE}
 #   Now put it all together and make a plot
 
 m6 <- ggplot() +
@@ -517,18 +509,18 @@ tmap::tm_shape(df_sf) +
 
 tmap::tmap_mode("plot") # set mode to static plots
 
-Basemap_5 <- tmaptools::read_osm(bbox, type="osm")
+Base_tmap_osm <- tmaptools::read_osm(bbox, type="osm")
 
-tmap::tm_shape(Basemap_5) +
+tmap::tm_shape(Base_tmap_osm) +
     tmap::tm_rgb() +
 tmap::tm_shape(df_sf) + 
   tmap::tm_sf(col="black", size=0.3)
 
 #     And now for projected coordinates
 
-Basemap_6 <- stars::st_transform_proj(Basemap_5, crs=localcrs)
+Base_tmap_osm_xy <- stars::st_transform_proj(Base_tmap_osm, crs=localcrs)
 
-tmap::tm_shape(Basemap_6) +
+tmap::tm_shape(Base_tmap_osm_xy) +
     tmap::tm_rgb() +
 tmap::tm_shape(df_xy) + 
   tmap::tm_sf(col="black", size=0.3)
@@ -707,6 +699,12 @@ I should note that one issue I have with tmap is that it will silently ignore er
 far too often. I misspelled options, color palettes, and other items and the items were silently
 ignored, which was incredibly frustrating. That makes it much harder to use than it should be.
 
+That said the basemaps are okay, though when transformed the labels get corrupted. My 
+greatest issue is that I already understand ggplot, and don't want to learn yet another
+package like it. Though I guess one could argue that it could replace leaflet, so that
+might be an argument in it's favor. In any event, I present it here, but I'm not
+energetic enough to dual plot everything in ggplot and tmap.
+
 ```{r density map in tmap}
 
 
@@ -725,9 +723,9 @@ tmap::tm_shape(df_sf) +
 
 tmap::tmap_mode("plot") # set mode to static plots
 
-Basemap_5 <- tmaptools::read_osm(bbox, type="osm")
+Base_tmap_osm <- tmaptools::read_osm(bbox, type="osm")
 
-tmap::tm_shape(Basemap_5) +
+tmap::tm_shape(Base_tmap_osm) +
     tmap::tm_rgb() +
   tmap::tm_shape(df_sf) + 
     tmap::tm_sf(col="black", size=0.3) +
@@ -742,9 +740,9 @@ tmap::tm_shape(Basemap_5) +
 
 #     And now for projected coordinates
 
-Basemap_6 <- stars::st_transform_proj(Basemap_5, crs=localcrs)
+Base_tmap_osm_xy <- stars::st_transform_proj(Base_tmap_osm, crs=localcrs)
 
-tmap::tm_shape(Basemap_6) +
+tmap::tm_shape(Base_tmap_osm_xy) +
     tmap::tm_rgb() +
 tmap::tm_shape(df_xy) + 
   tmap::tm_sf(col="black", size=0.3)+
@@ -837,7 +835,7 @@ ggplot() +
 ```
 
 A note on the displays. A useful trick I learned from a software vendor (Jason Geophysics)
-was to place the original data on top of the colored contour fill, and give both the same
+was to place the original data on top of the colored grid fill, and give both the same
 colormap and matching scale. In this way, the original data point will seem to disappear if 
 its value is close to the interpolated values around it. If the error is large, however, 
 then the point will stand out. It is a nice qualitative measure of the robustness of the
@@ -868,6 +866,7 @@ fit_IDW <- gstat::gstat(
 
 #   Use predict to apply the model fit to the grid (using the data frame grid version)
 
+#           We set debug.level to turn off annoying output
 interp_IDW <- predict(fit_IDW, grd_sf, debug.level=0)
 
 #   Convert to a stars object so we can use the contouring in stars
@@ -886,18 +885,30 @@ ggplot() +
   scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
   #     This is for the original data points
   scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
-  labs(title="Inverse Distance Weighting, Power = 3")
+  labs(title="Inverse Distance Weighting, Power = 1.5")
 
 ```
 
 How do we decide to use any particular power for the weighting? Let's try a number of
 values and see what changes. This section was particularly inspired by @Dorman and @Gimond.
 
+As the final map shows, there are areas where adjacent points have wide variation, and the
+algorithm struggles to fit those data. This is a rough surface with a great deal of
+variability, and for the degree of variability, is terribly under-sampled. I would expect
+all algorithms to be challenged.
+
+Another aspect of the under sampling and roughness is estimating the error. A weighting power
+of 1.5 is very gentle, and will tend to allow points at some distance to have an undue 
+influence on the result. With a rough surface, as we will see more explicitly later on
+from the variogram, the correlation distance should be small, and a larger weighting power
+will accomplish that. Partly because of that intuition, I have calculated the optimum
+weighting power base on both the Root Mean Square error (RMS), and the 
+Mean Absolute Error (MAE). I prefer the latter.
 
 ```{r validation and testing}
 
+#   debug and verbose set to turn off chatter
 Validate <- sf::st_as_sf(gstat::gstat.cv(fit_IDW, debug.level=0, verbose=FALSE))
-
 
 Validate %>% 
   rename(Observed=observed, Predicted=var1.pred ) %>% 
@@ -942,6 +953,19 @@ RMS %>%
     geom_smooth() +
     labs(title="RMS Error vs. Inverse Distance Weighting Power")
 
+#     However, RMS error is dominated by outliers, and gives a model that feels wrong.
+#     Let's try Mean absolute error instead
+
+MAE <- Validate %>% 
+  group_by(power) %>% 
+  summarise(MAE=(sum(abs(Predicted-Observed)) / n()))
+
+MAE %>% 
+  ggplot(aes(x=power, y=MAE)) +
+    geom_point() +
+    geom_smooth() +
+    labs(title="MAE Error vs. Inverse Distance Weighting Power")
+
 #     Let's look at the optimal RMS on a map
 #bind_cols(sf::st_drop_geometry(Validate), as_tibble(sf::st_coordinates(Validate)))  
 Validate %>% 
@@ -950,31 +974,26 @@ Validate %>%
   ggplot() +
     geom_sf(aes(size=abs(Difference), color=Difference)) +
     scale_size_continuous(range=c(1,12)) +
-  #scale_color_gradientn(colors=rainbow(5), limits=c(-2,2)) 
-    colorspace::scale_color_continuous_diverging(palette = "Blue-Red 3")
-    #viridis::scale_color_viridis()
+    geom_sf(aes(size=0.0001), color="black") +
+    colorspace::scale_color_continuous_diverging(palette = "Blue-Red 3")+
+    labs(title="Power of 1.5, MAE optimum")
+  
+#     Let's look at the optimal MAE on a map
+#bind_cols(sf::st_drop_geometry(Validate), as_tibble(sf::st_coordinates(Validate)))  
+Validate %>% 
+  filter(power==2.0) %>% 
+    mutate(Difference=Predicted-Observed) %>% 
+  ggplot() +
+    geom_sf(aes(size=abs(Difference), color=Difference)) +
+    scale_size_continuous(range=c(1,12)) +
+    geom_sf(aes(size=0.0001), color="black") +
+    colorspace::scale_color_continuous_diverging(palette = "Blue-Red 3") +
+    labs(title="Power of 2, MAE optimum")
   
 
 ```
 
-
-<!--  ```{r temp, messages=FALSE, echo=FALSE} -->
-
-<!-- df_temp <- as_tibble(replicate(3,sample(0:100,10,rep=TRUE))) %>% rename(x=1, y=2, z=3) -->
-<!-- df_temp <- sf::st_as_sf(df_temp, coords=c("x", "y"), agr = "identity") -->
-<!-- df_out <- sf::st_sfc(sf::st_point(c(50,50))) -->
-
-<!-- fit_IDW <- gstat::gstat( -->
-<!--   formula = z ~ 1, -->
-<!--   data = df_temp, -->
-<!--   set = list(idp = 1) -->
-<!-- ) -->
-
-<!-- interp_IDW <- predict(fit_IDW, df_out, debug.level = 0) -->
-<!-- #suppressMessages(interp_IDW <- predict(fit_IDW, df_out)) -->
-
-<!--  ``` -->
-
+### Contours
 
 Now let's make some contours. I am avoiding using some contouring commands, because I
 want to be able to treat the contours as lines, and convert them from X-Y coordinates
@@ -1012,8 +1031,11 @@ the contours to show the changes between contour lines. But the nicest bit is th
 metR::geom_contour2 will label contours - which is frankly pretty awesome.
 
 Of course there are always competing desires. I like to stay as mainstream as I can, so that
-old code doesn't break when a specialty package loses support and gets bit rot. On the 
+old code doesn't break when a specialty package loses support and gets bit-rot. On the 
 other hand, some added functionality is so nice that it is hard to resist.
+
+metR will also do contour fill, but it will fill with a constant color between contours, which
+is not what I want. I want to see the continuous color variation.
 
 
 ```{r test metR}
@@ -1049,12 +1071,18 @@ Note that when smoothing, we lose the data on the edges due to the half-width of
 smoothing filter. Fortunately we built our grid with extra space around the edges.
 
 In geology, we consider two main sorts of surfaces - folded topographies and erosional 
-topographies. Folded systems we expect to be smoothly varying with no "bulls-eyes".
+topographies. Folded systems we expect to be smoothly varying (ignoring faults!) with 
+no "bulls-eyes".
 But erosional surfaces might easily have abrupt changes, and in that case "bulls-eyes"
 are perfectly reasonable. In truth, this sort of rainfall - heavy rain from scattered
 individual thunderheads, should look more like the erosional model.
 
+In this case we have to jump over to terra for the smoothing functionality.
 
+I have also made use of the smoothr package, which among other things will take the
+contour lines themselves as input objects, and smooth them out a little, basically
+file down the sharp edges. It make very tiny changes, but quite noticeable, and very
+pleasing.
 
 ```{r smoothing}
 
@@ -1066,7 +1094,6 @@ foo_terra <- terra::rast(interp_IDW_stars)
 #   Let's do a 3x3 mean
 foo_sm <- terra::focal(foo_terra, w=3, fun=mean)
 #   Create contours again
-#Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE, breaks=brks$brks)
 Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=TRUE, breaks=brks)
 #  One more step - let's smooth the contours themselves - really just aesthetically
 #  round off the pointy bits
@@ -1087,7 +1114,7 @@ ggplot() +
        subtitle="Red contours are original, Blue are final, color fill is smoothed data.")
 ```
 
-Now let's transform our contours to lat-long and plot
+Now let's transform our contours to lat-long and plot on a basemap
 
 ```{r xform to LL}
 
@@ -1106,14 +1133,8 @@ ggplot() +
   #   Add points
   geom_sf(data=df_sf) +
   #   Create filled density "contours" 
-  # geom_sf(data=Contours_LL, 
-  #         aes(fill=focal_mean), alpha=0.4, na.value="transparent") +
-  # colorspace::scale_fill_discrete_sequential(name = "Inches Rain",
   #                                            palette="Blues 3") +
   geom_sf(data=Contours_LL, color="black") +
-  #scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
-  #scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
-  #scale_fill_gradientn(palette="Blue 3", limits=c(0,3), na.value="transparent") +
   scale_fill_viridis_c(direction=-1, alpha=0.4) +
   #   Add a scale bar
   ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
@@ -1121,42 +1142,6 @@ ggplot() +
   #   Add title
   ggtitle("Rainfall Measurements") +
   coord_sf(crs=googlecrs) # required 
-
-#   Finally, let's do some checks on how well this procedure did.
-
-#############  @gimond
-# Leave-one-out validation routine
-npts <- length(sf::st_geometry(df_xy)) # number of points in sf object
-IDW.out <- vector(length = npts)
-for (i in 1:npts) {
-  IDW.out[i] <- gstat::idw(formula=Rain ~ 1, 
-                           locations=df_xy[-i,], 
-                           newdata=df_xy[i,], 
-                           debug.level=0,
-                           #nmax = 10, nmin = 3,
-                           idp=3)$var1.pred
-}
-
-bind_cols(sf::st_drop_geometry(df_xy), as_tibble(IDW.out)) %>% 
-  rename(Observed=Rain, Predicted=value ) %>% 
-  ggplot(aes(x=Observed, y=Predicted)) + 
-    geom_point() +
-    geom_smooth(method='lm') +
-    geom_abline(intercept=0, slope=1, color="red", linetype="dashed") +
-    labs(title="Leave-one-out Validation",
-         x="Observed (inches)",
-         y="Predicted (inches)")
-
-# Compute RMSE
-sqrt( sum((IDW.out - df_xy$Rain)^2) / npts)
-
-# Plot histograms of errors
-
-bind_cols(sf::st_drop_geometry(df_xy), as_tibble(IDW.out)) %>% 
-  rename(Observed=Rain, Predicted=value ) %>% 
-  mutate(Error = Predicted - Observed) %>% 
-  ggplot(aes(x=Error)) +
-    geom_histogram()
 
 ```
 
