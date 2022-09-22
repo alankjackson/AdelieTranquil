@@ -861,7 +861,7 @@ fit_IDW <- gstat::gstat(
   formula = Rain ~ 1,
   data = df_xy, 
   #nmax = 10, nmin = 3, # can also limit the reach with these numbers
-  set = list(idp = 3) # inverse distance power
+  set = list(idp = 2) # inverse distance power
 )
 
 #   Use predict to apply the model fit to the grid (using the data frame grid version)
@@ -1114,9 +1114,15 @@ ggplot() +
        subtitle="Red contours are original, Blue are final, color fill is smoothed data.")
 ```
 
-Now let's transform our contours to lat-long and plot on a basemap
+Now let's transform our contours to lat-long and plot on a basemap. Sadly, it appears that 
+I cannot label the contours in ggplot, geom_contour and metR both fail silently no matter
+what I do. I suspect (and found a stack overflow comment that seems to confirm) that these
+commands do not expect sf objects. Maybe if I regridded everything into a rectilinear 
+lat-long grid it might work, but that seems like a lot of work just to get contour labels.
 
-```{r xform to LL}
+In the next section I'll show an alternative from stack overflow, using tmap.
+
+```{r xform to LL, error=TRUE, message=TRUE}
 
 
 #   Now lets transform the contours & grid to lat-long space and plot on the basemap
@@ -1133,17 +1139,43 @@ ggplot() +
   #   Add points
   geom_sf(data=df_sf) +
   #   Create filled density "contours" 
-  #                                            palette="Blues 3") +
   geom_sf(data=Contours_LL, color="black") +
   scale_fill_viridis_c(direction=-1, alpha=0.4) +
   #   Add a scale bar
   ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
     location="br", width_hint=0.2, bar_cols=1) +
+  #   Add CI annotation at specified window coordinates
+  annotation_custom(grid::textGrob(label = "C.I. = 0.5 inches of rain",
+                                 x = unit(0.2, "npc"),
+                                 y = unit(0.02, "npc"))) +
+  geom_contour(data=as_tibble(foo_sm_star_LL),
+               aes(x=x, y=y, z=Rain)
+               )+
+  coord_sf(crs=googlecrs) + # required 
   #   Add title
-  ggtitle("Rainfall Measurements") +
-  coord_sf(crs=googlecrs) # required 
+  labs(title="Rainfall Measurements",
+       subtitle="Inverse Distance Weighting interpolation",
+       x="Longitude", y="Latitude")
 
+  
 ```
+
+###   Final quality map using tmap
+
+```{r IDW tmap}
+
+tmap::tmap_mode("plot") # set mode to static plots
+
+#  Base_tmap_osm <- tmaptools::read_osm(bbox, type="osm")
+
+tmap::tm_shape(Base_tmap_osm) +
+    tmap::tm_rgb() +
+tmap::tm_shape(df_sf) + 
+  tmap::tm_sf(col="black", size=0.3)
+```
+
+
+
 
 ```{r Kriging}
 
