@@ -746,12 +746,12 @@ tmap::tm_shape(Base_tmap_osm_xy) +
     tmap::tm_rgb() +
 tmap::tm_shape(df_xy) + 
   tmap::tm_sf(col="black", size=0.3)+
-  tmap::tm_shape(sf::st_transform(contours, crs=localcrs)) +
-    tmap::tm_polygons(col="contlabel",
-                      title="Density %",
-                      labels=c("80%", "60%", "40%", "20%"),
-                      palette="Blues",
-                      alpha=0.5 ) +
+tmap::tm_shape(sf::st_transform(contours, crs=localcrs)) +
+  tmap::tm_polygons(col="contlabel",
+                    title="Density %",
+                    labels=c("80%", "60%", "40%", "20%"),
+                    palette="Blues",
+                    alpha=0.5 ) +
   tmap::tm_layout(legend.position = c("right", "top"),
                   legend.frame=TRUE)
 
@@ -1162,16 +1162,37 @@ ggplot() +
 
 ###   Final quality map using tmap
 
+So here I can label the contours - however I have to label all of them. I'd prefer if I could
+(like metR allows) add a skip factor for the labels. The spots chosen to place the labels are
+also sub-optimal. metR looks for the flattest spot to label, which is rather nice.
+
+Tmap is nice, but I don't know if I am ready to learn a whole new major package just for
+maping when I can get ggplot to get pretty close to what I want.
+
 ```{r IDW tmap}
 
 tmap::tmap_mode("plot") # set mode to static plots
 
-#  Base_tmap_osm <- tmaptools::read_osm(bbox, type="osm")
+#   Tweak the bounding box, it felt a little restrictive. But I would like the raster coloring
+#   to stay smaller...
+new_bb <- tmaptools::bb(bbox, relative=TRUE,
+                        width=1.05,
+                        height=1.05)
 
-tmap::tm_shape(Base_tmap_osm) +
-    tmap::tm_rgb() +
+tmap::tm_shape(Base_tmap_osm, bbox=new_bb)+
+  tmap::tm_rgb() +
+  tmap::tm_graticules(col ="lightgray", line = TRUE) +
+tmap::tm_shape(interp_IDW_stars) +
+  tmap::tm_raster(palette="Blues", alpha=0.5, style="cont") +
+  tmap::tm_layout(frame = TRUE, inner.margins = 0, legend.outside=TRUE) +
 tmap::tm_shape(df_sf) + 
-  tmap::tm_sf(col="black", size=0.3)
+  tmap::tm_sf(col="black", size=0.3) +
+tmap::tm_shape(Contours_LL) + 
+  tmap::tm_iso(col="black", text="focal_mean") +
+tmap::tm_scale_bar(breaks = c(0, 5, 10), text.size = 1,
+                   position=c("right", "BOTTOM"))
+
+
 ```
 
 
