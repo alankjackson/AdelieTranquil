@@ -1518,20 +1518,17 @@ Spline_grid <- sf::st_as_sf(Spline_grid) %>%
 
 #   Convert to a stars object so we can use the contouring in stars
 Spline_stars <- stars::st_rasterize(Spline_grid %>% dplyr::select(Rain, geometry))
-#   Make some pretty breaks for contour intervals based on the data
-#brks <- classInt::classIntervals(pretty(n=10, x=as.vector(Spline_stars[[1]])), n=8)
 #   Create contour lines
 Contours_Spline <- stars::st_contour(Spline_stars, contour_lines=TRUE, breaks=brks)
-#   Plot to see what it all looks like
 #   and our final plot in X-Y space
 ggplot() +
-  #geom_sf(data=Spline_grid, aes(color=Rain), size=5) +
   stars::geom_stars(data=Spline_stars) +  
   scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
   geom_sf(data=df_xy, color="Black", size=1) +
   scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
-  geom_sf(data=Contours_Spline, color="black") 
+  geom_sf(data=Contours_Spline, color="black") +
+  labs(title="Final X-Y plot of Akima Spline Interpolation")
 
 #     Convert and plot up the Delauny linear result
 
@@ -1541,20 +1538,17 @@ Spline_grid_delauny <- sf::st_as_sf(Spline_grid_delauny) %>%
 
 #   Convert to a stars object so we can use the contouring in stars
 Spline_stars <- stars::st_rasterize(Spline_grid_delauny %>% dplyr::select(Rain, geometry))
-#   Make some pretty breaks for contour intervals based on the data
-#brks <- classInt::classIntervals(pretty(n=10, x=as.vector(Spline_stars[[1]])), n=8)
 #   Create contour lines
 Contours_Spline <- stars::st_contour(Spline_stars, contour_lines=TRUE, breaks=brks)
-#   Plot to see what it all looks like
 #   and our final plot in X-Y space
 ggplot() +
-  #geom_sf(data=Spline_grid, aes(color=Rain), size=5) +
   stars::geom_stars(data=Spline_stars) +  
   scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
   geom_sf(data=df_xy, color="Black", size=1) +
   scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
-  geom_sf(data=Contours_Spline, color="black") 
+  geom_sf(data=Contours_Spline, color="black") +
+  labs(title="Final X-Y plot of Barycentric Interpolation")
 
 ```
 
@@ -1585,21 +1579,19 @@ interp_TPS <- raster::interpolate(grd_raster, fit_TPS)
 
 #   Convert to a stars object so we can use the contouring in stars
 TPS_stars <- stars::st_as_stars(interp_TPS)
-#   Make some pretty breaks for contour intervals based on the data
-brks <- classInt::classIntervals(pretty(n=10, x=as.vector(TPS_stars[[1]])), n=8)
 #   Create contour lines
-Contours_TPS <- stars::st_contour(TPS_stars, contour_lines=TRUE, breaks=brks$brks)
+Contours_TPS <- stars::st_contour(TPS_stars, contour_lines=TRUE, breaks=brks)
 #   Plot to see what it all looks like
 #   and our final plot in X-Y space
 ggplot() +
-  #stars::geom_stars(data=rename(TPS_stars, Rain=layer) %>% 
-  #                   mutate(Rain = if_else(between(Rain, 0, 3), Rain, NULL))) +
   stars::geom_stars(data=rename(TPS_stars, Rain=layer)) +  
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
   geom_sf(data=df_xy, color="Black", size=1) +
   scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
   scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
-  geom_sf(data=Contours_TPS, color="red") 
+  geom_sf(data=Contours_TPS, color="black") 
 ```
+
+##   Summary
 
 
