@@ -254,11 +254,8 @@ Now let's use basemaps::basemap_ggplot
 
 ```{r basemaps_basemaps, cache=TRUE}
 # Produces a ggplot object (and caches it)
-#Base_basemaps <- xfun::cache_rds({
 basemaps::set_defaults(map_service = "osm", map_type = "streets")
 Base_basemaps <-  basemaps::basemap_ggplot(ext=bbox, verbose=FALSE)
-#  Base_basemaps
-#})
 ```
 
 Now we download using basemapR::base_map
@@ -272,10 +269,7 @@ And last but not least, download using ggspatial::annotation_map_tile
 
 ```{r basemaps_ggspatial, cache=TRUE}
 # Produces a ggplot object
-#Base_ggspatial <- xfun::cache_rds({
   Base_ggspatial <- ggplot(df_sf) + ggspatial::annotation_map_tile(zoomin=-1) 
-#  Base_ggspatial
-#})
 ```
 
 So now let's create actual plots and look at the different basemaps
@@ -352,39 +346,33 @@ osmdata::available_tags("highway") %>% head()
 
 
 #     pull out the "big streets"
-big_streets <- xfun::cache_rds({
-  big_streets <- 
-    tmaptools::bb(bbox, output="matrix") %>% # turn bounding box into matrix
-    osmdata::opq()%>% # Build query
-    osmdata::add_osm_feature(key = "highway", 
-                    value = c("motorway", 
-                              "motorway_link" 
-                              )) %>% # select the big roads
-    osmdata::osmdata_sf() # turn into an sf file
-})
+big_streets <- 
+  tmaptools::bb(bbox, output="matrix") %>% # turn bounding box into matrix
+  osmdata::opq()%>% # Build query
+  osmdata::add_osm_feature(key = "highway", 
+                  value = c("motorway", 
+                            "motorway_link" 
+                            )) %>% # select the big roads
+  osmdata::osmdata_sf() # turn into an sf file
   
 
 #     pull out the "medium streets"
-med_streets <- xfun::cache_rds({
-  med_streets <- 
-    tmaptools::bb(bbox, output="matrix") %>%  # turn bounding box into matrix
-    osmdata::opq()%>%  #   Build query
-    osmdata::add_osm_feature(key = "highway", 
-                    value = c( "secondary_link",
-                              "secondary")) %>%  #   Grab smaller roads
-    osmdata::osmdata_sf() #   Make sf
-})
+med_streets <- 
+  tmaptools::bb(bbox, output="matrix") %>%  # turn bounding box into matrix
+  osmdata::opq()%>%  #   Build query
+  osmdata::add_osm_feature(key = "highway", 
+                  value = c( "secondary_link",
+                            "secondary")) %>%  #   Grab smaller roads
+  osmdata::osmdata_sf() #   Make sf
 
 #   Now get rivers
 osmdata::available_tags("waterway") %>% head()
 osmdata::available_tags("water") %>% head()
 
-river <- xfun::cache_rds({
-  river <- tmaptools::bb(bbox, output="matrix") %>%
-    osmdata::opq()%>%
-    osmdata::add_osm_feature(key = "waterway", value = "river") %>%
-    osmdata::osmdata_sf()  
-})
+river <- tmaptools::bb(bbox, output="matrix") %>%
+  osmdata::opq()%>%
+  osmdata::add_osm_feature(key = "waterway", value = "river") %>%
+  osmdata::osmdata_sf()  
 
 lakes <- xfun::cache_rds({
   lakes <- tmaptools::bb(bbox, output="matrix") %>%
@@ -1195,10 +1183,49 @@ tmap::tm_scale_bar(breaks = c(0, 5, 10), text.size = 1,
 
 ```
 
+###     Kriging
+
+Kriging is a big topic, so I will not explain much here. Good references to start with would be
+@Gimond, @Wilke, @rspatial
+
+There are a few steps to doing Kriging. The algorithm assumes that the data has no regional 
+trend - that at some distance (called the range) the data essentially become uncorrelated.
+To satisfy this requirement, the first step is normally to remove any trends (called the drift),
+usually by fitting a low-order polynomial to the data and subtracting it.
+
+There were examples of doing this as part of the kriging process itself, but I could not get
+them to work. In any event, I like to look at the individual steps to make sure they make sense
+and that things are working properly.
+
+Key to the process is fitting a variogram model. Intuitively, the range is the distance beyond
+which the data points do not correlate. The nugget has several interpretations - it can 
+represent the degree of error on the input data, or it can represent an inherent non-linearity
+in the data - such as suddenly drilling into a gold nugget.
+
+In our dataset, the variogram clearly shows that the range includes very little data,
+indicating that, as we saw with the IDW analysis, that we are very under-sampled given the
+short wavelength variability in this data.
+
+One big plus of Kriging is that it automatically provides an error estimate at each point,
+which is always useful to consider.
+
+So briefly, the process is as follows:
+
+1. Fit a low-order polynomial to the input data
+2. Subtract the chosen polynomial
+3. Fit the variogram with different functions to choose the best
+4. Krige the data to the desired output grid
+5. Add the polynomial back to the data
+6. Plot the map
+7. Plot the residual map to get a feel for the error bars
 
 
+###   Get the Drift
 
-```{r Kriging}
+It is pretty clear that the 2nd order fir has a serious overshoot problem in the NW corner,
+so choosing the linear fit is pretty easy. Which is almost always the case.
+
+```{r Drift}
 
 #   Struggled a lot to get examples to work, so I went my own way
 #   It is important in Kriging to remove any low frequency trend. This is typically
@@ -1218,10 +1245,14 @@ lm.1 <- lm( f.1, data=df_xy_df)
 #   Use predict to apply the model fit to the grid
 #     This re-attaches X-Y coordinates to the predicted values so they can be made into a grid
 
-Poly_fit.1 <- sf::st_as_sf(bind_cols(grd_df,data.frame(var1.pred=predict(lm.1, grd_df))), crs=localcrs, coords=c("X", "Y"))
+Poly_fit.1 <- sf::st_as_sf(bind_cols(grd_df,
+                                     data.frame(var1.pred=predict(lm.1, grd_df))), 
+                           crs=localcrs, 
+                           coords=c("X", "Y"))
 
 #   Convert to a stars object 
-Poly_fit_star.1 <- stars::st_rasterize(Poly_fit.1 %>% dplyr::select(Rain=var1.pred, geometry))
+Poly_fit_star.1 <- stars::st_rasterize(Poly_fit.1 %>% 
+                                         dplyr::select(Rain=var1.pred, geometry))
 
 ggplot() +
   stars::geom_stars(data=Poly_fit_star.1) +
@@ -1241,10 +1272,14 @@ lm.2 <- lm( f.2, data=df_xy_df)
 #   Use predict to apply the model fit to the grid
 #     This re-attaches X-Y coordinates to the predicted values so they can be made into a grid
 
-Poly_fit.2 <- sf::st_as_sf(bind_cols(grd_df,data.frame(var1.pred=predict(lm.2, grd_df))), crs=localcrs, coords=c("X", "Y"))
+Poly_fit.2 <- sf::st_as_sf(bind_cols(grd_df,
+                                     data.frame(var1.pred=predict(lm.2, grd_df))), 
+                           crs=localcrs, 
+                           coords=c("X", "Y"))
 
 #   Convert to a stars object 
-Poly_fit_star.2 <- stars::st_rasterize(Poly_fit.2 %>% dplyr::select(Rain=var1.pred, geometry))
+Poly_fit_star.2 <- stars::st_rasterize(Poly_fit.2 %>% 
+                                         dplyr::select(Rain=var1.pred, geometry))
 
 ggplot() +
   stars::geom_stars(data=Poly_fit_star.2) +
@@ -1256,7 +1291,8 @@ ggplot() +
   labs(title="Second order polynomial trend from rainfall data")
 
 #   A matter of judgement, but I think I like the first order fit better, so we'll go with it.
-#   First remove that fit from the input data
+
+#   Calculate residuals
 
 df_xy_res <- bind_cols(predict(lm.1, as_tibble(sf::st_coordinates(df_xy))), 
                 sf::st_coordinates(df_xy)) %>% 
@@ -1266,23 +1302,57 @@ df_xy_res <- bind_cols(predict(lm.1, as_tibble(sf::st_coordinates(df_xy))),
   mutate(Detrended=Rain-Trend) %>% 
   sf::st_as_sf()
 
+```
+
+#### Variogram
+
+The variogram plots gamma - the distance between point values, against the differences in
+distance between those points. There are a number of standard models that are usually used:
+
+- Spherical
+- Exponential
+- Gaussian
+- Matern
+
+There is a large literature and a number of functions available in R for choosing a variogram.
+I will do it by eye. I will set the nugget to zero, since for this data I have no expectation
+that there should be a nugget effect.
+
+
+
+```{r Variogram}
+
 #   Let's look at the variogram
 
 var.smpl <- gstat::variogram(Detrended ~ 1, 
-                             data=df_xy_res)
+                             data=df_xy_res, cloud = TRUE)
 # Compute the variogram model by passing the nugget, sill and range values
 # to fit.variogram() via the vgm() function.
 #                models are "Sph", "Exp", "Mat", and "Gau"
-dat.fit  <- gstat::fit.variogram(var.smpl, fit.ranges = TRUE, fit.sills = TRUE,
-                                 debug.level = 0,
-                          gstat::vgm(psill=NA, model="Exp", range=NA, nugget=0))
 
-##plot(var.smpl, dat.fit, xlim=c(0,30000))
+Plot_data <- NULL
+for (model in c("Sph", "Exp", "Mat", "Gau")) {
+  foo  <- gstat::fit.variogram(var.smpl, fit.ranges = TRUE, fit.sills = TRUE,
+                                   debug.level = 0,
+                            gstat::vgm(psill=NA, model=model, range=NA, nugget=0))
+  Plot_data <- bind_rows(Plot_data, gstat::variogramLine(foo, maxdist = max(var.smpl$dist)) %>% 
+                           mutate(Model=model))
+}
 
 ggplot(var.smpl, aes(x = dist, y = gamma)) +
      geom_point() +
-     geom_line(data = gstat::variogramLine(dat.fit, maxdist = max(var.smpl$dist))) +
+     geom_line(data=Plot_data, aes(x=dist, y=gamma, color=Model)) +
      labs(title="Variogram for detrended data")
+
+
+```
+
+
+
+```{r Kriging}
+
+
+
 
 #   We have our model, so now let's use it
 
