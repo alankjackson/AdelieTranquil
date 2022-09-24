@@ -992,7 +992,7 @@ need to compare several plots, the contour breaks may change between plots.
 ```{r IDW contours}
 
 #   Make some pretty breaks for contour intervals based on the data
-brks <- classInt::classIntervals(pretty(n=10, x=as.vector(interp_IDW_stars[[1]])), n=8)
+#brks <- classInt::classIntervals(pretty(n=10, x=as.vector(interp_IDW_stars[[1]])), n=8)
 #     Or define the breaks - we'll use these to have consistent contours between plots
 brks <- seq(from = 0, to = 3, by = 0.5)
 #   Create contour lines
@@ -1476,21 +1476,6 @@ ggplot() +
 
 ```
 
-One really nice feature of Kriging is that it automatically gives an error estimate,
-so you can easily get a feel for how robust the fitting is. So it is clear that the 
-variance is pretty small around each of the input data locations, and can get quite
-a bit larger as you interpolate away from data. This reflects the rather large variation in
-the input data, showing that away from control, all bets are off.
-
-```{r kriging error}
-
-ggplot() +
-  stars::geom_stars(data=Krigged_starvar) +
-  scale_fill_viridis_c() 
-
-
-```
-
 ### Bicubic Splines
 
 Sometimes splines work really well, but the roughness of this dataset is so large that
@@ -1498,7 +1483,12 @@ they overshoot and fail rather miserably. But still worth trying out. If the inp
 were much smoother, they would do a dandy job. It is sad though that it still requires sp
 objects, and doesn't (yet?) support sf.
 
+The Akima performs rather poorly with bad overshoot at the edges and in the interior of
+the map. I don't know enough about it to even guess at how one might tweak the many
+parameters to improve the interpolation.
 
+The Linear method, or barycentric, is quite a bit better, except at the edges. The
+contours could use some serious smoothing as well.
 
 ```{r Bicubic splines}
 
@@ -1511,26 +1501,60 @@ Spline_grid <- interp::interp(x=sf::as_Spatial(df_xy),
                               xo= grd_df$X,
                               yo= grd_df$Y,
                               method="akima",
+                              degree = 2,
+                              extrap=TRUE)
+
+Spline_grid_delauny <- interp::interp(x=sf::as_Spatial(df_xy),
+                              z="Rain",
+                              xo= grd_df$X,
+                              yo= grd_df$Y,
+                              method="linear",
                               extrap=FALSE)
+
 
 #   Convert back to sf and set any results outside original data range to NA
 Spline_grid <- sf::st_as_sf(Spline_grid) %>% 
   mutate(Rain = if_else(between(Rain, minRain, maxRain), Rain, NULL))
 
 #   Convert to a stars object so we can use the contouring in stars
-Spline_stars <- stars::st_rasterize(Spline_grid %>% dplyr::select(value=Rain, geometry))
+Spline_stars <- stars::st_rasterize(Spline_grid %>% dplyr::select(Rain, geometry))
 #   Make some pretty breaks for contour intervals based on the data
-brks <- classInt::classIntervals(pretty(n=10, x=as.vector(Spline_stars[[1]])), n=8)
+#brks <- classInt::classIntervals(pretty(n=10, x=as.vector(Spline_stars[[1]])), n=8)
 #   Create contour lines
-Contours_Spline <- stars::st_contour(Spline_stars, contour_lines=TRUE, breaks=brks$brks)
+Contours_Spline <- stars::st_contour(Spline_stars, contour_lines=TRUE, breaks=brks)
 #   Plot to see what it all looks like
 #   and our final plot in X-Y space
 ggplot() +
-  geom_sf(data=Spline_grid, aes(color=Rain), size=5) +
+  #geom_sf(data=Spline_grid, aes(color=Rain), size=5) +
+  stars::geom_stars(data=Spline_stars) +  
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
   geom_sf(data=df_xy, color="Black", size=1) +
-  scale_color_gradientn(colors=rainbow(5)) +
-  geom_sf(data=Contours_Spline, color="red") 
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=Contours_Spline, color="black") 
+
+#     Convert and plot up the Delauny linear result
+
+#   Convert back to sf and set any results outside original data range to NA
+Spline_grid_delauny <- sf::st_as_sf(Spline_grid_delauny) %>% 
+  mutate(Rain = if_else(between(Rain, minRain, maxRain), Rain, NULL))
+
+#   Convert to a stars object so we can use the contouring in stars
+Spline_stars <- stars::st_rasterize(Spline_grid_delauny %>% dplyr::select(Rain, geometry))
+#   Make some pretty breaks for contour intervals based on the data
+#brks <- classInt::classIntervals(pretty(n=10, x=as.vector(Spline_stars[[1]])), n=8)
+#   Create contour lines
+Contours_Spline <- stars::st_contour(Spline_stars, contour_lines=TRUE, breaks=brks)
+#   Plot to see what it all looks like
+#   and our final plot in X-Y space
+ggplot() +
+  #geom_sf(data=Spline_grid, aes(color=Rain), size=5) +
+  stars::geom_stars(data=Spline_stars) +  
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=Contours_Spline, color="black") 
 
 ```
 
