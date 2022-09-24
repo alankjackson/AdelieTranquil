@@ -374,15 +374,13 @@ river <- tmaptools::bb(bbox, output="matrix") %>%
   osmdata::add_osm_feature(key = "waterway", value = "river") %>%
   osmdata::osmdata_sf()  
 
-lakes <- xfun::cache_rds({
-  lakes <- tmaptools::bb(bbox, output="matrix") %>%
-    osmdata::opq()%>%
-    osmdata::add_osm_feature(key = "water", value = c("reservoir",
-                                                      "lake",
-                                                      "basin",
-                                                      "pond")) %>%
-    osmdata::osmdata_sf() 
-})
+lakes <- tmaptools::bb(bbox, output="matrix") %>%
+  osmdata::opq()%>%
+  osmdata::add_osm_feature(key = "water", value = c("reservoir",
+                                                    "lake",
+                                                    "basin",
+                                                    "pond")) %>%
+  osmdata::osmdata_sf() 
 ```
 
 ```{r basemaps_vector_plot, warning=FALSE, message=FALSE}
@@ -873,7 +871,7 @@ ggplot() +
   scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
   #     This is for the original data points
   scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
-  labs(title="Inverse Distance Weighting, Power = 1.5")
+  labs(title="Inverse Distance Weighting, Power = 2")
 
 ```
 
@@ -1318,6 +1316,11 @@ There is a large literature and a number of functions available in R for choosin
 I will do it by eye. I will set the nugget to zero, since for this data I have no expectation
 that there should be a nugget effect.
 
+If you look into the variable var.smpl, you can see that the lowest gamma point, which has
+an undue influence on the fit, is a binned value of a single point, while the rest of the data
+points are from distance bins containing many points. This should cause pause. In any event,
+I will choose the Matern function fit just because I want to extend the range a little more,
+and that seems as good a reason as any.
 
 
 ```{r Variogram}
@@ -1325,7 +1328,7 @@ that there should be a nugget effect.
 #   Let's look at the variogram
 
 var.smpl <- gstat::variogram(Detrended ~ 1, 
-                             data=df_xy_res, cloud = TRUE)
+                             data=df_xy_res)
 # Compute the variogram model by passing the nugget, sill and range values
 # to fit.variogram() via the vgm() function.
 #                models are "Sph", "Exp", "Mat", and "Gau"
@@ -1347,28 +1350,27 @@ ggplot(var.smpl, aes(x = dist, y = gamma)) +
 
 ```
 
+####  Kriging
+
+The variance map shows the same story - the correlation length is short, so the influence any
+data point has is limited, so as you move away from data the map quickly reaches some average
+regional value with a fairly high error bar.
 
 
 ```{r Kriging}
-
-
-
-
 #   We have our model, so now let's use it
 
-# foo <- bind_cols(df_xy$Rain, as_tibble(sf::st_coordinates(df_xy))) %>% 
-#   rename(Rain = 1)
-# 
-# Krigged_grid <- gstat::krige(Rain ~ X + Y,
-#                              foo,
-#                              grd_sf,
-#                              dat.fit)
+dat.fit <- gstat::fit.variogram(var.smpl, fit.ranges = TRUE, fit.sills = TRUE,
+                                   debug.level = 0,
+                            gstat::vgm(psill=NA, model="Mat", range=NA, nugget=0))
+
 Krigged_grid <- gstat::krige(Detrended ~ 1,
                              df_xy_res,
                              grd_sf,
                              debug.level=0,
                              dat.fit)
 Krigged_star <- stars::st_rasterize(Krigged_grid %>% dplyr::select(Rain=var1.pred, geometry))
+
 #     Residuals
 ggplot() +
   stars::geom_stars(data=Krigged_star) +
@@ -1378,11 +1380,13 @@ ggplot() +
 
 #   Variance
 Krigged_starvar <- stars::st_rasterize(Krigged_grid %>% dplyr::select(Rain_var=var1.var, geometry))
+
 #     Variance
 ggplot() +
   stars::geom_stars(data=Krigged_starvar) +
   scale_fill_gradientn(colors=rainbow(5)) +
-  geom_sf(data=df_xy, color="Black", size=1) +
+  #     This is here to get the scaling consistent with other plots
+  geom_sf(data=df_xy, color="Black", size=1, alpha=0) +
   labs(title="Variance from Kriging")
 
 #     Final grid - residuals plus drift
@@ -1392,66 +1396,83 @@ Final_krige_star <- Krigged_star + Poly_fit_star.1
 
 ggplot() +
   stars::geom_stars(data=Final_krige_star) +
-  #geom_sf(data=sf::st_as_sf(Final_krige_star), aes(color=value), size=5) +
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
   scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
   scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
   geom_sf(data=df_xy, color="Black", size=1) +
   labs(title="Final Kriging result")
 
+```
+
+
+
+```{r Nice Kriged plot}
+
 #   Let's make some contours
 
 #   Make some pretty breaks for contour intervals based on the data
-brks <- classInt::classIntervals(pretty(n=10, x=as.vector(Final_krige_star[[1]])), n=8)
+#brks <- classInt::classIntervals(pretty(n=10, x=as.vector(Final_krige_star[[1]])), n=8)
 #   Create contour lines
 Contours_Krig <- stars::st_contour(Final_krige_star, contour_lines=TRUE, breaks=brks$brks)
 #   Plot to see what it all looks like
 ggplot() +
+  stars::geom_stars(data=Final_krige_star) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
-  scale_color_gradientn(colors=rainbow(5)) +
-  geom_sf(data=Contours_Krig, color="red") 
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  geom_sf(data=Contours_Krig, color="black") 
   
-#   Hmmm.... could use some smoothing
-#   But stars does not have focal operations, so we go to terra?
+#   Hmmm.... could use some smoothing, but just to remove points and kinks.
 
-foo_terra <- terra::rast(Final_krige_star) 
-foo_sm <- terra::focal(terra::focal(foo_terra, w=3, fun=median), w=5, fun=mean)
-brks <- classInt::classIntervals(pretty(n=10, x=na.omit(as.vector(foo_sm[[1]]))), n=6)
-#   Create contours again
-Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=FALSE, breaks=brks$brks)
-#  One more step - let's smooth the contours
-Contours_sm2 <- smoothr::smooth(Contours_sm, method="ksmooth", smoothness=2)
+Contours_sm <- smoothr::smooth(Contours_Krig, method="ksmooth", smoothness=2)
 
 #   and our final plot in X-Y space
 ggplot() +
-  #geom_sf(data=interp_IDW, aes(color=var1.pred), size=5) +
+  stars::geom_stars(data=Final_krige_star) +  
   geom_sf(data=df_xy, aes(color=Rain), size=5) +
-  scale_color_gradientn(colors=rainbow(5)) +
-  geom_sf(data=Contours_IDW, color="red") +
-  geom_sf(data=Contours_sm, color="black", alpha=0.4) +
-  geom_sf(data=Contours_sm, color="black", alpha=0.4) +
-  geom_sf(data=Contours_sm2, color="blue", aes(fill=focal_mean), alpha=0.4) 
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  geom_sf(data=Contours_Krig, color="red") +
+  geom_sf(data=Contours_sm, color="blue") +
+  annotate("text", label="C.I. = 0.5 inches of rain", x=bbox_xy[['xmin']]+5000, 
+                                              y=bbox_xy[['ymin']]-1000) +
+  labs(title="Final X-Y plot of Krigged data",
+       subtitle="Red contours are original, Blue are final, color fill is smoothed data.")
 
 #   Now lets transform the contours to lat-long space and plot on the basemap
 
 Contours_LL <- sf::st_transform(Contours_sm, crs=googlecrs) 
+Krig_star_LL <- sf::st_transform(Final_krige_star, crs=googlecrs)
 
 ggplot() +
   #   this is the best looking basemap
   Base_basemapR +
+  #   Gridded data
+  stars::geom_stars(data=Krig_star_LL, alpha=0.4) +  
   #   Add points
   geom_sf(data=df_sf) +
   #   Create filled density "contours" 
-  geom_sf(data=Contours_LL, 
-          aes(fill=focal_mean), alpha=0.4) +
-  colorspace::scale_fill_discrete_sequential(name = "Inches Rain") +
-
+  geom_sf(data=Contours_LL, color="black") +
+  scale_fill_viridis_c(direction=-1, alpha=0.4) +
   #   Add a scale bar
   ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
     location="br", width_hint=0.2, bar_cols=1) +
+  #   Add CI annotation at specified window coordinates
+  annotation_custom(grid::textGrob(label = "C.I. = 0.5 inches of rain",
+                                 x = unit(0.2, "npc"),
+                                 y = unit(0.02, "npc"))) +
+  geom_contour(data=as_tibble(foo_sm_star_LL),
+               aes(x=x, y=y, z=Rain)
+               )+
+  coord_sf(crs=googlecrs) + # required 
   #   Add title
-  ggtitle("Rainfall Measurements") +
-  coord_sf(crs=googlecrs) # required 
+  labs(title="Rainfall Measurements",
+       subtitle="Inverse Distance Weighting interpolation",
+       x="Longitude", y="Latitude")
+
+
 
 ```
 
