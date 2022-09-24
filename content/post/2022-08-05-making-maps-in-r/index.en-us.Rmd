@@ -1319,13 +1319,16 @@ distance between those points. There are a number of standard models that are us
 
 There is a large literature and a number of functions available in R for choosing a variogram.
 I will do it by eye. I will set the nugget to zero, since for this data I have no expectation
-that there should be a nugget effect.
+that there should be a nugget effect. Although, given the sudden variation apparent over
+short distances, I will go ahead and run a test with the nugget as a fitting parameter.
 
 If you look into the variable var.smpl, you can see that the lowest gamma point, which has
 an undue influence on the fit, is a binned value of a single point, while the rest of the data
 points are from distance bins containing many points. This should cause pause. In any event,
 I will choose the Matern function fit just because I want to extend the range a little more,
 and that seems as good a reason as any.
+
+Interestingly, not specifying a zero nugget did not affect most of the fits.
 
 
 ```{r Variogram}
@@ -1349,8 +1352,28 @@ for (model in c("Sph", "Exp", "Mat", "Gau")) {
 
 ggplot(var.smpl, aes(x = dist, y = gamma)) +
      geom_point() +
+     geom_text(aes(hjust="left", label=np), nudge_x=200) +
      geom_line(data=Plot_data, aes(x=dist, y=gamma, color=Model)) +
-     labs(title="Variogram for detrended data")
+     labs(title="Variogram for detrended data",
+          subtitle="Numbers represent number of points in the distance bin")
+
+#      Allow nugget to float
+
+Plot_data <- NULL
+for (model in c("Sph", "Exp", "Mat", "Gau")) {
+  foo  <- gstat::fit.variogram(var.smpl, fit.ranges = TRUE, fit.sills = TRUE,
+                                   debug.level = 0,
+                            gstat::vgm(psill=NA, model=model, range=NA, nugget=NA))
+  Plot_data <- bind_rows(Plot_data, gstat::variogramLine(foo, maxdist = max(var.smpl$dist)) %>% 
+                           mutate(Model=model))
+}
+
+ggplot(var.smpl, aes(x = dist, y = gamma)) +
+     geom_point() +
+     geom_text(aes(hjust="left", label=np), nudge_x=200) +
+     geom_line(data=Plot_data, aes(x=dist, y=gamma, color=Model)) +
+     labs(title="Variogram for detrended data, nugget not set to zero",
+          subtitle="Numbers represent number of points in the distance bin")
 
 
 ```
@@ -1418,7 +1441,7 @@ ggplot() +
 #   Make some pretty breaks for contour intervals based on the data
 #brks <- classInt::classIntervals(pretty(n=10, x=as.vector(Final_krige_star[[1]])), n=8)
 #   Create contour lines
-Contours_Krig <- stars::st_contour(Final_krige_star, contour_lines=TRUE, breaks=brks$brks)
+Contours_Krig <- stars::st_contour(Final_krige_star, contour_lines=TRUE, breaks=brks)
 #   Plot to see what it all looks like
 ggplot() +
   stars::geom_stars(data=Final_krige_star) +
@@ -1468,9 +1491,6 @@ ggplot() +
   annotation_custom(grid::textGrob(label = "C.I. = 0.5 inches of rain",
                                  x = unit(0.2, "npc"),
                                  y = unit(0.02, "npc"))) +
-  geom_contour(data=as_tibble(foo_sm_star_LL),
-               aes(x=x, y=y, z=Rain)
-               )+
   coord_sf(crs=googlecrs) + # required 
   #   Add title
   labs(title="Rainfall Measurements",
