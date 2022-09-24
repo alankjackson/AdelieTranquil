@@ -14,6 +14,13 @@ bibliography: References.bib
 ```{r setup, include=FALSE}
 library(tidyverse)
 
+#########################   to do
+#    clean up references
+#    get bookdown working
+#    write summary
+#    
+
+
 knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
 ```
 
@@ -598,8 +605,6 @@ ggplot(df_sf) +
   #   Add a scale bar
  ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
     location="br", width_hint=0.2, bar_cols=1) +
-#  ggsn::scalebar(df_sf, dist = 2, dist_unit = "mi", location="bottomleft",
-#             transform = TRUE, model = "WGS84") +
   #   Add title
   ggtitle("Density of Rainfall Measurements") +
   labs(subtitle="Density using stat_density_2d") +
@@ -626,6 +631,7 @@ m2 <-
   #   Add a scale bar
   ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
     location="br", width_hint=0.2, bar_cols=1) +
+  ###########   This is an alternative way to add a scale
  # ggsn::scalebar(df_sf, dist = 2, dist_unit = "mi", location="bottomleft",
   #           transform = TRUE, model = "WGS84") +
   #   Add title
@@ -953,7 +959,6 @@ MAE %>%
     labs(title="MAE Error vs. Inverse Distance Weighting Power")
 
 #     Let's look at the optimal RMS on a map
-#bind_cols(sf::st_drop_geometry(Validate), as_tibble(sf::st_coordinates(Validate)))  
 Validate %>% 
   filter(power==1.5) %>% 
     mutate(Difference=Predicted-Observed) %>% 
@@ -996,7 +1001,6 @@ need to compare several plots, the contour breaks may change between plots.
 #     Or define the breaks - we'll use these to have consistent contours between plots
 brks <- seq(from = 0, to = 3, by = 0.5)
 #   Create contour lines
-#Contours_IDW <- stars::st_contour(interp_IDW_stars, contour_lines=TRUE, breaks=brks$brks)
 Contours_IDW <- stars::st_contour(interp_IDW_stars, contour_lines=TRUE, breaks=brks)
 #   Plot to see what it all looks like
 ggplot() +
@@ -1030,6 +1034,7 @@ ggplot() +
   #   geom_stars will display the full grid variation, geom_contour_fill will fill
   #   between the contours with a constant hue.
   stars::geom_stars(data=interp_IDW_stars) +  
+  #########   This is left in just as an example - if you want that sort of contour fill
   # metR::geom_contour_fill(data=as_tibble(interp_IDW_stars), 
   #                         aes(x=x, y=y, z=Rain),
   #                         breaks=brks,
@@ -1469,7 +1474,7 @@ ggplot() +
   coord_sf(crs=googlecrs) + # required 
   #   Add title
   labs(title="Rainfall Measurements",
-       subtitle="Inverse Distance Weighting interpolation",
+       subtitle="Kriging interpolation",
        x="Longitude", y="Latitude")
 
 
@@ -1589,7 +1594,8 @@ ggplot() +
   geom_sf(data=df_xy, color="Black", size=1) +
   scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
   scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
-  geom_sf(data=Contours_TPS, color="black") 
+  geom_sf(data=Contours_TPS, color="black") +
+  labs(title="Final X-Y plot of Thin-plate Interpolation")
 ```
 
 ##   Summary
