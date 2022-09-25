@@ -6,14 +6,12 @@ AdelieTranquil.Rproj
 *.png
 cover3.jpg
 oldcontent
-public
-static
+/public
 themes
 wview-archive.sdb
 index.html
 favicon.ico
 index.Rmd
-config.toml
 keepold.RData
 netlify.toml
 .Rproj.user_lessold
