@@ -1,15 +1,16 @@
 ---
-title: "Making Contour Maps in R"
-author: "Alan Jackson"
-date: "2022-08-05"
-categories: Mapping
+title: Making Contour Maps in R
+author: Alan Jackson
+date: '2022-08-05'
+categories:
+  - Maps
 tags:
-- Gridding
-- Mapping
+  - Contouring
+  - Gridding
 slug: '[making_maps_in_r]'
 keywords: tech
-bibliography: References.bib
 ---
+
 
 ```{r setup, include=FALSE}
 library(tidyverse)
@@ -19,6 +20,8 @@ library(tidyverse)
 #    get bookdown working
 #    write summary
 #    
+# bibliography: 
+#   - References.bib
 
 
 knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
@@ -78,21 +81,21 @@ appropriate projected UTM coordinate system.
 
 There are a number of references that have been especially helpful.
 
-[Geocomputation With R by Robin Lovelace: ](https://geocompr.robinlovelace.net/index.html)
+<!-- [Geocomputation With R by Robin Lovelace: ](https://geocompr.robinlovelace.net/index.html) -->
 
-[Introduction to R Programming by Michael Dorman: ](http://132.72.155.230:3838/r/index.html)
+<!-- [Introduction to R Programming by Michael Dorman: ](http://132.72.155.230:3838/r/index.html) -->
 
-[Spatial Data Science by Edzer Pebesma and Roger Bivand: ](https://keen-swartz-3146c4.netlify.app/)
+<!-- [Spatial Data Science by Edzer Pebesma and Roger Bivand: ](https://keen-swartz-3146c4.netlify.app/) -->
 
-[Kernel density estimates for tidy and geospatial data in the eks package:](https://cran.r-project.org/web/packages/eks/vignettes/tidysf_kde.html)
+<!-- [Kernel density estimates for tidy and geospatial data in the eks package:](https://cran.r-project.org/web/packages/eks/vignettes/tidysf_kde.html) -->
 
-[Data Analysis and Visualization with R: Spatial: ](http://www.geo.hunter.cuny.edu/~ssun/R-Spatial/mapping.html#web-mapping-with-leaflet)
+<!-- [Data Analysis and Visualization with R: Spatial: ](http://www.geo.hunter.cuny.edu/~ssun/R-Spatial/mapping.html#web-mapping-with-leaflet) -->
 
-[smoothr - package for smoothing contours: ](https://cran.r-project.org/web/packages/smoothr/vignettes/smoothr.html)
+<!-- [smoothr - package for smoothing contours: ](https://cran.r-project.org/web/packages/smoothr/vignettes/smoothr.html) -->
 
-[basemapR - package for creating a basemap: ](https://github.com/Chrisjb/basemapR)
+<!-- [basemapR - package for creating a basemap: ](https://github.com/Chrisjb/basemapR) -->
 
-[Intro to GIS and Spatial Analysis by Manuel Gimond: ](https://mgimond.github.io/Spatial/interpolation-in-r.html)
+<!-- [Intro to GIS and Spatial Analysis by Manuel Gimond: ](https://mgimond.github.io/Spatial/interpolation-in-r.html) -->
 
 ```{r make test data}
 
@@ -312,11 +315,6 @@ m4
 m5
 
 ```
-
-
-<!-- ```{r stop} -->
-<!-- knitr::knit_exit() -->
-<!-- ``` -->
 
 ###  One more basemap, but this one built with vectors, not rasters
 
@@ -539,10 +537,10 @@ To add a scalebar, there are two options: ggspatial or ggsn.
 
 References that were especially helpful :
 
-https://swilke-geoscience.net/post/spatial_interpolation/
-https://github.com/dkahle/ggmap
-https://r-spatial.org/r/2018/10/25/ggplot2-sf.html
-[eks](https://www.mvstat.net/mvksa/)
+<!-- https://swilke-geoscience.net/post/spatial_interpolation/ -->
+<!-- https://github.com/dkahle/ggmap -->
+<!-- https://r-spatial.org/r/2018/10/25/ggplot2-sf.html -->
+<!-- [eks](https://www.mvstat.net/mvksa/) -->
  @Duong
 
 ###       Measurement density
@@ -1527,7 +1525,7 @@ Spline_grid <- interp::interp(x=sf::as_Spatial(df_xy),
                               yo= grd_df$Y,
                               method="akima",
                               degree = 2,
-                              extrap=TRUE)
+                              extrap=FALSE)
 
 Spline_grid_delauny <- interp::interp(x=sf::as_Spatial(df_xy),
                               z="Rain",
