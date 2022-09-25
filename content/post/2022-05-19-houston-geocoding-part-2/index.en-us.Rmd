@@ -1,13 +1,13 @@
 ---
-title: 'Houston Geocoding - Part 2'
+title: Houston Geocoding - Part 2
 author: Alan Jackson
 date: '2022-05-19'
-slug: [Houston_Geocoding-Part-2]
 categories:
   - Geocoding
 tags:
-  - Houston
   - Mapping
+  - Houston
+slug: '[Houston_Geocoding-Part-2]'
 keywords:
   - tech
 ---
