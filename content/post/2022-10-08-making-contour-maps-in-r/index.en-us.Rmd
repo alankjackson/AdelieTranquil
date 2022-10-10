@@ -41,11 +41,15 @@ this may help others involved in the same struggles.
 
 Ultimately I want to create filled contours that represent a surface, based on
 some random collection of input points, and display those contours on top of
-a detailed basemap, such as OpenStreet map.
+a detailed basemap, such as OpenStreetMap.
 
 I will try to use what I believe are the most recent and most likely to
 survive packages wherever possible. Both static and interactive maps will be 
-generated.
+generated. I will also be explicit in which packages I am using. I found it
+rather frustrating to be looking at examples people had on the web, and then
+wondering which package supplied which function. A rule I read many years
+ago was "explicit is better than implicit", and I will try to follow that
+dictum.
 
 Note that there are several challenges that may this a somewhat difficult 
 exercise.
@@ -67,12 +71,6 @@ create a simple tibble, and then attach proper geodetic information while
 converting it to an sf file. I will also transform the sf file to an
 appropriate projected UTM coordinate system.
 
-Note that for this blog entry, I have not attached most of the packages I am 
-using, but rather show each package explicitly with each function call. This
-is a habit I commend to anyone writing instructions for others. I spent way too 
-much time trying to figure out which package various functions in people's
-examples came from.
-
 
 ### Summary of process
 
@@ -81,9 +79,10 @@ examples came from.
 - Plot contours of measurement point density
 - Create a grid to define interpolation locations
 - Build an interpolator
-  - Kriging
   - Inverse weighted nearest neighbor
+  - Kriging
   - Spline fitting
+  - Thin-plate model
 - Interpolate/Predict points onto grid
 - Calculate error and plot
 - Generate contours
@@ -93,6 +92,9 @@ examples came from.
 
 There are a number of references that have been especially helpful.
 
+I found @Lovelace to be a great overall reference for making maps in R, even
+though he did not address my particular issue. Other generally useful
+references that I found were @Pebesma, @Moraga, and @Engel.
 
 ```{r make test data}
 
@@ -188,7 +190,7 @@ bb <- c(bbox["xmin"], bbox["ymin"], bbox["xmax"], bbox["ymax"])
 
 ```
 
-### Basemaps
+## Basemaps
 
 My goal is to use the OpenStreet Map as a basemap. Retrieving those tiles will
 result in an image file in the so-called web crs, EPSG:3857, the Spherical
@@ -230,6 +232,8 @@ As far as I can tell, the only package that will allow for a projected basemap
 (that is X-Y coordinates) is OpenStreetMap. Which is sad.
 
 There is also quite a bit of disparity in the size of the map objects. 
+
+BasemapR may be found at @ChrisJB.
 
 ```{r size_table, echo=FALSE}
 
@@ -327,6 +331,10 @@ raster-based basemaps do not allow. So there are some clear advantages to using
 a vector map. Probably not what you want for a quick and dirty, but if you plane
 to be working in the same area for some time, it is probably worth spending the
 effort to tweak up a pretty vector-based map.
+
+There were many references I found that helped work out how to best deal with
+OSM data. My primary references were @McCrain and @Burkhart, followed by
+@Padgham. Other useful references were @Ourcodingclub, @Guillou, and @Bailey.
 
 ```{r size_table2, echo=FALSE, results='asis'}
 tibble::tribble( ~Package, ~Size_KB,
@@ -493,6 +501,8 @@ We can also transform the basemap to a local X-Y coordinate system, but the
 results are not especially pleasing since the text labels get distorted by the
 transform.
 
+Outside of @Lovelace, the other especially helpful tmap reference was @Tennekes.
+
 ```{r tmap basemap, cache=FALSE}
 
 #   Set default basemap
@@ -541,14 +551,9 @@ ggplot, and also use tmap.
 For the static maps, I will use the basemaps generated above that looked the
 best.
 
-To add a scalebar, there are two options: ggspatial or ggsn. 
+To add a scalebar, there are two options: ggspatial or ggsn (@Baquero). 
 
 References that were especially helpful were @Wilke and @Duong.
-
-<!-- https://swilke-geoscience.net/post/spatial_interpolation/ -->
-<!-- https://github.com/dkahle/ggmap -->
-<!-- https://r-spatial.org/r/2018/10/25/ggplot2-sf.html -->
-<!-- [eks](https://www.mvstat.net/mvksa/) -->
 
 My biggest issue with the density plot is that I don't know what the numbers
 mean. A density of 5 is 5 stations per what? Not at all clear. Of course, it is
@@ -787,6 +792,10 @@ table, but a lot slower.
 To pick this spacing I started with a guess, and then played with the grid
 spacing and looking at what the contours looked like to decide what the "best"
 value was.
+
+References for interpolation that I used were @Gimond (Appendix J), 
+@Wilke, and chapter 4 of @rspatial. For Kriging in particular, I found @Dorman
+very helpful.
 
 
 ```{r Make some grids}
@@ -1097,6 +1106,8 @@ I have also made use of the smoothr package, which among other things will take
 the contour lines themselves as input objects, and smooth them out a little,
 basically file down the sharp edges. It makes very tiny changes, but quite
 noticeable, and very pleasing.
+
+For smoothr - the package to smooth contours, the reference is @Strimas-Mackey.
 
 ```{r smoothing}
 
@@ -1623,7 +1634,7 @@ ggplot() +
 ### Thin Plate
 
 The thin plate model is rather painful, requiring a sojourn into the raster
-package and the fields package - so it is perhaps not well supported? In any
+package and the fields packages - so it is perhaps not well supported? In any
 event it yields a very smooth rendition of the surface with the default
 parameters. It might be useful for trend removal prior to kriging - less
 restrictive than a polynomial.
@@ -1631,7 +1642,7 @@ restrictive than a polynomial.
 The lambda parameter - basically the roughness penalty - seems to be the key
 parameter affecting how closely the solution matches the input data. Smaller
 values = greater roughness allowed. Of course, greater roughness also leads to
-overshoot. But with some tweaking, not a bad result.
+overshoot. But with some tweaking, not a bad result. I rather like this one.
 
 
 ```{r Thin Plate}
