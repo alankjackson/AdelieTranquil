@@ -1074,6 +1074,353 @@ ggplot() +
 ```
 
 
+##        Smoothing grids and contours
+
+Note that the smoothing step I have shown is actually inappropriate for this
+data - I assume that the rainfall measurements are basically error-free.
+However, if you had a dataset where you knew that there was substantial error in
+some of the measurements, then smoothing the fit might make a lot of sense.
+Especially if you are trying to see overall trends and not too interested in
+high resolution details that might be bogus anyway. Note that when smoothing, we
+lose the data on the edges due to the half-width of the smoothing filter.
+Fortunately we built our grid with extra space around the edges.
+
+In geology, we consider two main sorts of surfaces - folded topographies and
+erosional topographies. Folded systems we expect to be smoothly varying
+(ignoring faults!) with no "bulls-eyes". But erosional surfaces might easily
+have abrupt changes, and in that case "bulls-eyes" are perfectly reasonable. In
+truth, this sort of rainfall - heavy rain from scattered individual
+thunderheads, should look more like the erosional model.
+
+In this case we have to jump over to terra for the smoothing functionality.
+I have also made use of the smoothr package, which among other things will take
+the contour lines themselves as input objects, and smooth them out a little,
+basically file down the sharp edges. It makes very tiny changes, but quite
+noticeable, and very pleasing.
+
+```{r smoothing}
+
+
+#   Hmmm.... could use some smoothing
+#   But stars does not have focal operations, so we go to terra?
+
+foo_terra <- terra::rast(interp_IDW_stars) 
+
+#   Let's do a 3x3 mean
+foo_sm <- terra::focal(foo_terra, w=3, fun=mean)
+
+#   Create contours again
+Contours_sm <- stars::st_contour(stars::st_as_stars(foo_sm), contour_lines=TRUE, breaks=brks)
+
+#  One more step - let's smooth the contours themselves - really just
+#  aesthetically round off the pointy bits
+Contours_sm2 <- smoothr::smooth(Contours_sm, method="ksmooth", smoothness=2)
+
+#   and our final plot in X-Y space
+ggplot() +
+  stars::geom_stars(data=stars::st_as_stars(foo_sm) %>% 
+                      rename(Rain=focal_mean)) +  
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
+  geom_sf(data=Contours_IDW, color="red") +
+  geom_sf(data=Contours_sm2, color="blue") +
+  annotate("text", label="C.I. = 0.5 inches of rain", x=bbox_xy[['xmin']]+5000, 
+                                              y=bbox_xy[['ymin']]-1000) +
+  labs(title="Final X-Y plot of Inverse Weighted data",
+       subtitle="Red contours are original, Blue are final, color fill is smoothed data.")
+```
+
+Now let's transform our contours to lat-long and plot on a basemap. Sadly, it
+appears that I cannot label the contours in ggplot, geom_contour and metR both
+fail silently no matter what I do. I suspect (and found a stack overflow comment
+that seems to confirm) that these commands do not expect sf objects. Maybe if I
+regridded everything into a rectilinear lat-long grid it might work, but that
+seems like a lot of work just to get contour labels.
+
+In the next section I'll show an alternative from stack overflow, using tmap.
+
+```{r xform to LL, error=TRUE, message=TRUE}
+
+
+#   Now lets transform the contours & grid to lat-long space and plot on the
+#   basemap
+
+Contours_LL <- sf::st_transform(Contours_sm, crs=googlecrs) 
+
+foo_sm_star_LL <- sf::st_transform(stars::st_as_stars(foo_sm) %>%
+                                     rename(Rain=focal_mean),
+                                     crs=googlecrs)
+
+ggplot() +
+  #   this is the best looking basemap
+  Base_basemapR +
+  #   Gridded data
+  stars::geom_stars(data=foo_sm_star_LL, alpha=0.4) +  
+  #   Add points
+  geom_sf(data=df_sf) +
+  #   Create filled density "contours" 
+  geom_sf(data=Contours_LL, color="black") +
+  scale_fill_viridis_c(direction=-1, alpha=0.4) +
+  #   Add a scale bar
+  ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial",
+                                              style="ticks"),
+    location="br", width_hint=0.2, bar_cols=1) +
+  #   Add CI annotation at specified window coordinates
+  annotation_custom(grid::textGrob(label = "C.I. = 0.5 inches of rain",
+                                 x = unit(0.2, "npc"),
+                                 y = unit(0.02, "npc"))) +
+  geom_contour(data=as_tibble(foo_sm_star_LL),
+               aes(x=x, y=y, z=Rain)
+               )+
+  coord_sf(crs=googlecrs) + # required 
+  #   Add title
+  labs(title="Rainfall Measurements",
+       subtitle="Inverse Distance Weighting interpolation",
+       x="Longitude", y="Latitude")
+
+```
+
+
+###   Final quality map using tmap
+
+So here I can label the contours - however I have to label all of them. I'd
+prefer if I could (like metR allows) add a skip factor for the labels. The spots
+chosen to place the labels are also sub-optimal. metR looks for the flattest
+spot to label, which is rather nice. I also prefer the ggspatial scalebar, but
+that is just me.
+
+Tmap is nice, but I don't know if I am ready to learn a whole new major package
+just for mapping when I can get ggplot to get pretty close to what I want.
+
+```{r IDW tmap}
+
+tmap::tmap_mode("plot") # set mode to static plots
+
+#   Tweak the bounding box, it felt a little restrictive. But I would like the
+#   raster coloring to stay smaller...
+new_bb <- tmaptools::bb(bbox, relative=TRUE,
+                        width=1.05,
+                        height=1.05)
+
+tmap::tm_shape(Base_tmap_osm, bbox=new_bb)+
+  tmap::tm_rgb() +
+  tmap::tm_graticules(col ="lightgray", line = TRUE) +
+tmap::tm_shape(interp_IDW_stars) +
+  tmap::tm_raster(palette="Blues", alpha=0.5, style="cont") +
+  tmap::tm_layout(frame = TRUE, inner.margins = 0, legend.outside=TRUE) +
+tmap::tm_shape(df_sf) + 
+  tmap::tm_sf(col="black", size=0.3) +
+tmap::tm_shape(Contours_LL) + 
+  tmap::tm_iso(col="black", text="focal_mean") +
+tmap::tm_scale_bar(breaks = c(0, 5, 10), text.size = 1,
+                   position=c("right", "BOTTOM"))
+
+
+```
+
+##     Kriging
+
+Kriging is a big topic, so I will not explain much here. Good references to
+start with would be
+@Gimond, @Wilke, @rspatial
+
+There are a few steps to doing Kriging. The algorithm assumes that the data has
+no regional trend - that at some distance (called the range) the data
+essentially become uncorrelated. To satisfy this requirement, the first step is
+normally to remove any trends (called the drift), usually by fitting a low-order
+polynomial to the data and subtracting it.
+
+There were examples of doing this as part of the kriging process itself, but I
+could not get them to work. In any event, I like to look at the individual steps
+to make sure they make sense and that things are working properly.
+
+Key to the process is fitting a variogram model. Intuitively, the range is the
+distance beyond which the data points do not correlate. The nugget has several
+interpretations - it can represent the degree of error on the input data, or it
+can represent an inherent non-linearity in the data - such as suddenly drilling
+into a gold nugget.
+
+In our dataset, the variogram clearly shows that the range includes very little
+data, indicating that, as we saw with the IDW analysis, that we are very
+under-sampled given the short wavelength variability in this data.
+
+One big plus of Kriging is that it automatically provides an error estimate at
+each point, which is always useful to consider.
+
+So briefly, the process is as follows:
+
+1. Fit a low-order polynomial to the input data
+2. Subtract the chosen polynomial
+3. Fit the variogram with different functions to choose the best
+4. Krige the data to the desired output grid
+5. Add the polynomial back to the data
+6. Plot the map
+7. Plot the residual map to get a feel for the error bars
+
+
+###   Get the Drift
+
+It is pretty clear that the 2nd order fit has a serious overshoot problem in the
+NW corner, so choosing the linear fit is pretty easy. Which is almost always the
+case.
+
+```{r Drift}
+
+#   Struggled a lot to get examples to work, so I went my own way It is
+#   important in Kriging to remove any low frequency trend. This is typically
+#   done by fitting a low-order polynomial surface to the data and subtracting
+#   that off before proceeding. Then at the end, you add it back.
+
+#   Let's look at 1st and 2nd order fits
+
+df_xy_df <- bind_cols(sf::st_drop_geometry(df_xy), 
+                      sf::st_coordinates(df_xy)) # make a tibble
+
+# Define the 1st order polynomial equation
+f.1 <- as.formula(Rain ~ X + Y) 
+
+# Run the regression model
+lm.1 <- lm( f.1, data=df_xy_df)
+
+#   Use predict to apply the model fit to the grid This re-attaches X-Y
+#   coordinates to the predicted values so they can be made into a grid
+
+Poly_fit.1 <- sf::st_as_sf(bind_cols(grd_df,
+                                     data.frame(var1.pred=predict(lm.1, grd_df))), 
+                           crs=localcrs, 
+                           coords=c("X", "Y"))
+
+#   Convert to a stars object 
+Poly_fit_star.1 <- stars::st_rasterize(Poly_fit.1 %>% 
+                                         dplyr::select(Rain=var1.pred, geometry))
+
+ggplot() +
+  stars::geom_stars(data=Poly_fit_star.1) +
+  scale_fill_gradientn(colors=rainbow(5)) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=df_xy, color="Black", size=1)+ 
+  labs(title="Linear trend from rainfall data")
+
+# Now let's do a 2nd order polynomial       
+
+f.2 <- as.formula(Rain ~ X + Y + I(X*X)+I(Y*Y) + I(X*Y))
+# Run the regression model
+lm.2 <- lm( f.2, data=df_xy_df)
+
+#   Use predict to apply the model fit to the grid This re-attaches X-Y
+#   coordinates to the predicted values so they can be made into a grid
+
+Poly_fit.2 <- sf::st_as_sf(bind_cols(grd_df,
+                                     data.frame(var1.pred=predict(lm.2, grd_df))), 
+                           crs=localcrs, 
+                           coords=c("X", "Y"))
+
+#   Convert to a stars object 
+Poly_fit_star.2 <- stars::st_rasterize(Poly_fit.2 %>% 
+                                         dplyr::select(Rain=var1.pred, geometry))
+
+ggplot() +
+  stars::geom_stars(data=Poly_fit_star.2) +
+  scale_fill_gradientn(colors=rainbow(5)) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=df_xy, color="Black", size=1)+ 
+  labs(title="Second order polynomial trend from rainfall data")
+
+#   A matter of judgement, but I think I like the first order fit better, so
+#   we'll go with it. That is usually the case.
+
+#   Calculate residuals
+
+df_xy_res <- bind_cols(predict(lm.1, as_tibble(sf::st_coordinates(df_xy))), 
+                sf::st_coordinates(df_xy)) %>% 
+  rename(Trend=1) %>%
+  mutate(Trend=as.numeric(Trend)) %>% 
+  bind_cols(df_xy) %>% 
+  mutate(Detrended=Rain-Trend) %>% 
+  sf::st_as_sf()
+
+```
+
+
+#### Variogram
+
+The variogram plots gamma - the distance between point values, against the
+differences in distance between those points. There are a number of standard
+models that are usually used:
+
+- Spherical
+- Exponential
+- Gaussian
+- Matern
+
+There is a large literature and a number of functions available in R for
+choosing a variogram. I will do it by eye. I will set the nugget to zero, since
+for this data I have no expectation that there should be a nugget effect.
+Although, given the sudden variation apparent over short distances, I will go
+ahead and run a test with the nugget as a fitting parameter.
+
+If you look into the variable var.smpl, you can see that the lowest gamma point,
+which has an undue influence on the fit, is a binned value of a single point,
+while the rest of the data points are from distance bins containing many points.
+This should cause pause. In any event, I will choose the Matern function fit
+just because I want to extend the range a little more, and that seems as good a
+reason as any.
+
+Interestingly, not specifying a zero nugget did not affect most of the fits.
+
+
+```{r Variogram}
+
+#   Let's look at the variogram
+
+var.smpl <- gstat::variogram(Detrended ~ 1, 
+                             data=df_xy_res)
+# Compute the variogram model by passing the nugget, sill and range values
+# to fit.variogram() via the vgm() function.
+#                models are "Sph", "Exp", "Mat", and "Gau"
+
+Plot_data <- NULL
+for (model in c("Sph", "Exp", "Mat", "Gau")) {
+  foo  <- gstat::fit.variogram(var.smpl, fit.ranges = TRUE, fit.sills = TRUE,
+                                   debug.level = 0,
+                            gstat::vgm(psill=NA, model=model, range=NA, nugget=0))
+  Plot_data <- bind_rows(Plot_data, gstat::variogramLine(foo, maxdist = max(var.smpl$dist)) %>% 
+                           mutate(Model=model))
+}
+
+ggplot(var.smpl, aes(x = dist, y = gamma)) +
+     geom_point() +
+     geom_text(aes(hjust="left", label=np), nudge_x=200) +
+     geom_line(data=Plot_data, aes(x=dist, y=gamma, color=Model)) +
+     labs(title="Variogram for detrended data",
+          subtitle="Numbers represent number of points in the distance bin")
+
+#      Allow nugget to float
+
+Plot_data <- NULL
+for (model in c("Sph", "Exp", "Mat", "Gau")) {
+  foo  <- gstat::fit.variogram(var.smpl, fit.ranges = TRUE, fit.sills = TRUE,
+                                   debug.level = 0,
+                            gstat::vgm(psill=NA, model=model, range=NA, nugget=NA))
+  Plot_data <- bind_rows(Plot_data, gstat::variogramLine(foo, maxdist = max(var.smpl$dist)) %>% 
+                           mutate(Model=model))
+}
+
+ggplot(var.smpl, aes(x = dist, y = gamma)) +
+     geom_point() +
+     geom_text(aes(hjust="left", label=np), nudge_x=200) +
+     geom_line(data=Plot_data, aes(x=dist, y=gamma, color=Model)) +
+     labs(title="Variogram for detrended data, nugget not set to zero",
+          subtitle="Numbers represent number of points in the distance bin")
+
+
+```
 
 
 
