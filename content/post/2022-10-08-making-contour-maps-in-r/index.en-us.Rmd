@@ -1422,7 +1422,247 @@ ggplot(var.smpl, aes(x = dist, y = gamma)) +
 
 ```
 
+####  Kriging
 
+The variance map shows the same story - the correlation length is short, so the
+influence any data point has is limited, so as you move away from data the map
+quickly reaches some average regional value with a fairly high error bar.
+
+
+```{r Kriging}
+
+#   We have our model, so now let's use it
+dat.fit <- gstat::fit.variogram(var.smpl, fit.ranges = TRUE, fit.sills = TRUE,
+                                   debug.level = 0,
+                            gstat::vgm(psill=NA, model="Mat", range=NA, nugget=0))
+
+Krigged_grid <- gstat::krige(Detrended ~ 1,
+                             df_xy_res,
+                             grd_sf,
+                             debug.level=0,
+                             dat.fit)
+Krigged_star <- stars::st_rasterize(Krigged_grid %>% dplyr::select(Rain=var1.pred, geometry))
+
+#     Residuals
+ggplot() +
+  stars::geom_stars(data=Krigged_star) +
+  scale_fill_gradientn(colors=rainbow(5)) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  labs(title="Residuals from Kriging without drift")
+
+#   Variance
+Krigged_starvar <- stars::st_rasterize(Krigged_grid %>% dplyr::select(Rain_var=var1.var, geometry))
+
+#     Variance
+ggplot() +
+  stars::geom_stars(data=Krigged_starvar) +
+  scale_fill_gradientn(colors=rainbow(5)) +
+  #     This is here to get the scaling consistent with other plots
+  geom_sf(data=df_xy, color="Black", size=1, alpha=0) +
+  labs(title="Variance from Kriging")
+
+#     Final grid - residuals plus drift
+Final_krige_star <- Krigged_star + Poly_fit_star.1
+
+#   and a nice plot, after some work
+
+ggplot() +
+  stars::geom_stars(data=Final_krige_star) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  labs(title="Final Kriging result")
+
+```
+
+Now let's make a nice final plot from Kriging.
+
+```{r Nice Kriged plot}
+
+#   Let's make some contours
+
+#   Make some pretty breaks for contour intervals based on the data
+#brks <- classInt::classIntervals(pretty(n=10, x=as.vector(Final_krige_star[[1]])), n=8)
+#   Create contour lines
+Contours_Krig <- stars::st_contour(Final_krige_star, contour_lines=TRUE, breaks=brks)
+#   Plot to see what it all looks like
+ggplot() +
+  stars::geom_stars(data=Final_krige_star) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  geom_sf(data=Contours_Krig, color="black") 
+  
+#   Hmmm.... could use some smoothing, but just to remove points and kinks.
+
+Contours_sm <- smoothr::smooth(Contours_Krig, method="ksmooth", smoothness=2)
+
+#   and our final plot in X-Y space
+ggplot() +
+  stars::geom_stars(data=Final_krige_star) +  
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  geom_sf(data=Contours_Krig, color="red") +
+  geom_sf(data=Contours_sm, color="blue") +
+  annotate("text", label="C.I. = 0.5 inches of rain", x=bbox_xy[['xmin']]+5000, 
+                                              y=bbox_xy[['ymin']]-1000) +
+  labs(title="Final X-Y plot of Krigged data",
+       subtitle="Red contours are original, Blue are final, color fill is smoothed data.")
+
+#   Now lets transform the contours to lat-long space and plot on the basemap
+
+Contours_LL <- sf::st_transform(Contours_sm, crs=googlecrs) 
+Krig_star_LL <- sf::st_transform(Final_krige_star, crs=googlecrs)
+
+ggplot() +
+  #   this is the best looking basemap
+  Base_basemapR +
+  #   Gridded data
+  stars::geom_stars(data=Krig_star_LL, alpha=0.4) +  
+  #   Add points
+  geom_sf(data=df_sf) +
+  #   Create filled density "contours" 
+  geom_sf(data=Contours_LL, color="black") +
+  scale_fill_viridis_c(direction=-1, alpha=0.4) +
+  #   Add a scale bar
+  ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
+    location="br", width_hint=0.2, bar_cols=1) +
+  #   Add CI annotation at specified window coordinates
+  annotation_custom(grid::textGrob(label = "C.I. = 0.5 inches of rain",
+                                 x = unit(0.2, "npc"),
+                                 y = unit(0.02, "npc"))) +
+  coord_sf(crs=googlecrs) + # required 
+  #   Add title
+  labs(title="Rainfall Measurements",
+       subtitle="Kriging interpolation",
+       x="Longitude", y="Latitude")
+
+```
+
+### Bicubic Splines
+
+Sometimes splines work really well, but the roughness of this dataset is so
+large that they overshoot and fail rather miserably. But still worth trying out.
+If the input data were much smoother, they would do a dandy job. It is sad
+though that it still requires sp objects, and doesn't (yet?) support sf.
+
+The Akima performs rather poorly with bad overshoot at the edges and in the
+interior of the map. I don't know enough about it to even guess at how one might
+tweak the many parameters to improve the interpolation.
+
+The Linear method, or barycentric, is quite a bit better, except at the edges.
+The contours could use some serious smoothing as well.
+
+```{r Bicubic splines}
+
+minRain <- min(df_xy$Rain)
+maxRain <- max(df_xy$Rain)*1.1 # allow a 10% overshoot from the actual data
+
+#   Sadly doesn't support sf, so we have to convert to a Spatial object
+Spline_grid <- interp::interp(x=sf::as_Spatial(df_xy),
+                              z="Rain",
+                              xo= grd_df$X,
+                              yo= grd_df$Y,
+                              method="akima",
+                              degree = 2,
+                              extrap=FALSE)
+
+Spline_grid_delauny <- interp::interp(x=sf::as_Spatial(df_xy),
+                              z="Rain",
+                              xo= grd_df$X,
+                              yo= grd_df$Y,
+                              method="linear",
+                              extrap=FALSE)
+
+
+#   Convert back to sf and set any results outside original data range to NA
+Spline_grid <- sf::st_as_sf(Spline_grid) %>% 
+  mutate(Rain = if_else(between(Rain, minRain, maxRain), Rain, NULL))
+
+#   Convert to a stars object so we can use the contouring in stars
+Spline_stars <- stars::st_rasterize(Spline_grid %>% dplyr::select(Rain, geometry))
+#   Create contour lines
+Contours_Spline <- stars::st_contour(Spline_stars, contour_lines=TRUE, breaks=brks)
+#   and our final plot in X-Y space
+ggplot() +
+  stars::geom_stars(data=Spline_stars) +  
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=Contours_Spline, color="black") +
+  labs(title="Final X-Y plot of Akima Spline Interpolation")
+
+#     Convert and plot up the Delauny linear result
+
+#   Convert back to sf and set any results outside original data range to NA
+Spline_grid_delauny <- sf::st_as_sf(Spline_grid_delauny) %>% 
+  mutate(Rain = if_else(between(Rain, minRain, maxRain), Rain, NULL))
+
+#   Convert to a stars object so we can use the contouring in stars
+Spline_stars <- stars::st_rasterize(Spline_grid_delauny %>% dplyr::select(Rain, geometry))
+#   Create contour lines
+Contours_Spline <- stars::st_contour(Spline_stars, contour_lines=TRUE, breaks=brks)
+#   and our final plot in X-Y space
+ggplot() +
+  stars::geom_stars(data=Spline_stars) +  
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=Contours_Spline, color="black") +
+  labs(title="Final X-Y plot of Barycentric Interpolation")
+
+```
+
+
+### Thin Plate
+
+The thin plate model is rather painful, requiring a sojourn into the raster
+package and the fields package - so it is perhaps not well supported? In any
+event it yields a very smooth rendition of the surface with the default
+parameters. It might be useful for trend removal prior to kriging - less
+restrictive than a polynomial.
+
+The lambda parameter - basically the roughness penalty - seems to be the key
+parameter affecting how closely the solution matches the input data. Smaller
+values = greater roughness allowed. Of course, greater roughness also leads to
+overshoot. But with some tweaking, not a bad result.
+
+
+```{r Thin Plate}
+
+ # -------- Thin Plate Spline Regression 
+ fit_TPS <- fields::Tps( # using {fields} 
+   x = as.matrix(as_tibble(sf::st_coordinates(df_xy))), # accepts points but expects them as matrix 
+   Y = df_xy$Rain,  # the dependent variable 
+   lambda = 0.0001,
+   miles = FALSE # EPSG 26915 is based in meters 
+ ) 
+
+interp_TPS <- raster::interpolate(grd_raster, fit_TPS)
+
+#   Convert to a stars object so we can use the contouring in stars
+TPS_stars <- stars::st_as_stars(interp_TPS)
+#   Create contour lines
+Contours_TPS <- stars::st_contour(TPS_stars, contour_lines=TRUE, breaks=brks)
+#   Plot to see what it all looks like
+#   and our final plot in X-Y space
+ggplot() +
+  stars::geom_stars(data=rename(TPS_stars, Rain=layer)) +  
+  geom_sf(data=df_xy, aes(color=Rain), size=5) +
+  geom_sf(data=df_xy, color="Black", size=1) +
+  scale_fill_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  scale_color_gradientn(colors=rainbow(5), limits=c(0,3)) +
+  geom_sf(data=Contours_TPS, color="black") +
+  labs(title="Final X-Y plot of Thin-plate Interpolation")
+```
+
+##   Summary
 
 
 
