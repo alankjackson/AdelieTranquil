@@ -20,17 +20,14 @@ library(ggplot2)
 library(gt)
 
 #########################   to do
-#    clean up references
 #    get bookdown working
 #    write summary
-#    
-# slug: "index.en-us"
-# bibliography: 
-#   - References.bib
+
 
 
 knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
 ```
+
 
 ##  Notes on how to make contour maps in R
 
@@ -51,19 +48,27 @@ wondering which package supplied which function. A rule I read many years
 ago was "explicit is better than implicit", and I will try to follow that
 dictum.
 
-Note that there are several challenges that may this a somewhat difficult 
+Note that there are several challenges that make this a somewhat difficult 
 exercise.
 
 First of all, this area of R has undergone and continues to see a fair bit
 of churn. There are a number of packages that address parts of this problem,
-and they tend to overlap with each other.
+and they tend to overlap with each other. Googling for help can easily lead
+to using a superseded package, since there have been so many recent
+developments. By the same token, the newer packages have not, in all cases,
+covered the functionality of the older packages, so some use of the older
+packages may still be necessary.
 
-Secondly, there is a basic issue of coordinate systems. I will make maps in
+Secondly, there is a basic issue of coordinate systems. I will display maps in
 both geographic (that is, Lat-Long) coordinates and in projected (X-Y)
 coordinates. 
 
 Third, interpolating points to a grid is partly art and partly science, so I
 will give a bit of guidance there.
+
+Fourth, interpolating to a grid in order to then generate contours should be
+done in a projected X-Y coordinate system, so keeping track of what data is in
+which system, and projecting back and forth are key.
 
 My test data (seen below) consists of rainfall points in the Houston area
 from a selection of personal weather stations on August 19, 2022. I will
@@ -78,13 +83,13 @@ appropriate projected UTM coordinate system.
 - Preliminary work : basemap, Area of Interest
 - Plot contours of measurement point density
 - Create a grid to define interpolation locations
-- Build an interpolator
+- Build an interpolator using:
   - Inverse weighted nearest neighbor
   - Kriging
   - Spline fitting
   - Thin-plate model
-- Interpolate/Predict points onto grid
-- Calculate error and plot
+- Interpolate/Predict points onto the grid
+- Calculate errors and plot
 - Generate contours
 - Plot contours over a basemap
 
@@ -167,7 +172,7 @@ localUTM <- "EPSG:32615" # a WGS84 similar to EPSG:26915 - same UTM zone
 
 #     Locations and rainfall by lat long
 df_sf <- sf::st_as_sf(df, coords=c("Lon", "Lat"), crs=googlecrs, agr = "identity")
-#     Locations and rainfall by Lat Long in webcrs
+#     Locations and rainfall by X, Y in webcrs
 df_web <- sf::st_transform(df_sf, crs=webcrs)
 #     Locations and rainfall by X, Y
 df_xy <- sf::st_transform(df_sf, crs=localcrs)
@@ -192,8 +197,9 @@ bb <- c(bbox["xmin"], bbox["ymin"], bbox["xmax"], bbox["ymax"])
 
 ## Basemaps
 
-My goal is to use the OpenStreet Map as a basemap. Retrieving those tiles will
-result in an image file in the so-called web crs, EPSG:3857, the Spherical
+My goal is to use the OpenStreetMap as a basemap. There are other maps available
+(like Google), but OpenStreetMap is my own preferred. Retrieving those tiles
+will result in an image file in the so-called web crs, EPSG:3857, the Spherical
 Pseudo-Mercator projection. Being pixels, including the text, the image itself
 cannot be easily reprojected, so to use that image we will have to make sure
 everything is in EPSG:3857.
@@ -202,7 +208,7 @@ There are several packages that will download OSM tiles.
 
 - OpenStreetMap: Last update a few years ago 
 - basemaps: appears to be an active project
-- osmdata: Pulls vector data - different beast
+- osmdata: Pulls vector data - different beast, we'll cover it later
 - basemapR: active project, not on CRAN
 - ggspatial: active project, on CRAN
 
@@ -210,19 +216,12 @@ Interestingly, OpenStreetMap, basemaps, and ggspatial make crappy looking maps,
 fuzzy and not pleasing - cluttered with odd stuff. The basemapR map is much more
 aesthetically pleasing.
 
+Note that when talking to OSM, things like the bounding box should be in 
+lat-long coordinates, EPSG:4326 my googlecrs. Tiles are returned in X-Y
+coordinates in the webcrs, EPSG:3857.
+
 I don't understand what OpenStreetMap is actually doing when it "reprojects" the
-basemap. And it seems to be broken. Without reprojecting, the map appears to be
-in an X-Y system, but a strange one. I can reproject to a lat long system and
-everything seems okay, but if I give it an X-Y system to reproject to, it ends
-up in lat-long. At least according to the axis values. Apparently OpenStreetMap
-uses the raster package to do projections. The following warning is in the
-raster::projectRaster docs, "User beware. Sadly, the PROJ.4 notation has been
-partly deprecated in the GDAL/PROJ library that is used by this function. You
-can still use it, but *only* with the the WGS84 datum. Other datums are silently
-ignored." which explains a lot. Which is a serious limitation. Many states and
-counties in the US do not use WGS84, but use NAD83 - which is close, but leads
-to a different set of EPSG codes, and is a trap for the unwary. I really hate
-"silently ignores". That is aggressively user unfriendly.
+basemap. 
 
 Using osmdata is a lot more work, and the map is much plainer (unless you
 expend significant effort adding and controlling features), but it does
@@ -233,8 +232,7 @@ As far as I can tell, the only package that will allow for a projected basemap
 
 There is also quite a bit of disparity in the size of the map objects. 
 
-BasemapR may be found at @ChrisJB.
-
+<br/>
 ```{r size_table, echo=FALSE}
 
 tibble::tribble( ~Package, ~Size_KB,
@@ -267,11 +265,12 @@ Base_osm <- OpenStreetMap::openmap(c(bbox[["ymin"]],
 #   Plot in projected coordinates, but be careful!
 OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Base_osm,
                                       projection=localcrs)) +
+  # Note that I am using projected point locations
   geom_point(data=as_tibble(sf::st_coordinates(df_xy)), aes(x=X, y=Y))
 
 #   Plot in Lat Long (Scale coordinates to act like lat-long)
 OpenStreetMap::autoplot.OpenStreetMap(OpenStreetMap::openproj(Base_osm),
-                                       projection=googlecrs) +
+                                       projection=webcrs) +
    geom_point(data=df, aes(y=Lat, x=Lon))
 
 ```
@@ -284,11 +283,13 @@ basemaps::set_defaults(map_service = "osm", map_type = "streets")
 Base_basemaps <-  basemaps::basemap_ggplot(ext=bbox, verbose=FALSE)
 
 Base_basemaps +
-  geom_sf(data=df_web)
+  geom_sf(data=df_web) 
 
 ```
 
 Now we download using basemapR::base_map
+
+BasemapR may be found at @ChrisJB.
 
 ```{r basemaps_basemapR, cache=TRUE}
 # Produces a ggplot object
@@ -328,7 +329,7 @@ final map is quite small, as can be seen in the table below.
 For plotting the map in projected coordinates, we have to project the AOI as
 well. But we can plot the map in projected coordinates which most of the
 raster-based basemaps do not allow. So there are some clear advantages to using
-a vector map. Probably not what you want for a quick and dirty, but if you plane
+a vector map. Probably not what you want for a quick and dirty, but if you plan
 to be working in the same area for some time, it is probably worth spending the
 effort to tweak up a pretty vector-based map.
 
@@ -336,6 +337,7 @@ There were many references I found that helped work out how to best deal with
 OSM data. My primary references were @McCrain and @Burkhart, followed by
 @Padgham. Other useful references were @Ourcodingclub, @Guillou, and @Bailey.
 
+<br/>
 ```{r size_table2, echo=FALSE, results='asis'}
 tibble::tribble( ~Package, ~Size_KB,
          "Big Streets", 47.4,
@@ -354,7 +356,9 @@ First let's download the desired data
 
 ```{r basemaps_2, warning=FALSE, message=FALSE, cache=TRUE}
 
+#   What features are available?
 osmdata::available_features() %>% head()
+#   What tags are available?
 osmdata::available_tags("highway") %>% head()
 
 
@@ -501,6 +505,9 @@ We can also transform the basemap to a local X-Y coordinate system, but the
 results are not especially pleasing since the text labels get distorted by the
 transform.
 
+Not sure why the data-points increase in size when zooming in, that is rather
+irritating.
+
 Outside of @Lovelace, the other especially helpful tmap reference was @Tennekes.
 
 ```{r tmap basemap, cache=FALSE}
@@ -521,6 +528,7 @@ Base_tmap_osm <- tmaptools::read_osm(bbox, type="osm")
 
 tmap::tm_shape(Base_tmap_osm) +
     tmap::tm_rgb() +
+    tmap::tm_graticules()+
 tmap::tm_shape(df_sf) + 
   tmap::tm_sf(col="black", size=0.3)
 
@@ -530,6 +538,7 @@ Base_tmap_osm_xy <- stars::st_transform_proj(Base_tmap_osm, crs=localcrs)
 
 tmap::tm_shape(Base_tmap_osm_xy) +
     tmap::tm_rgb() +
+    tmap::tm_grid()+
 tmap::tm_shape(df_xy) + 
   tmap::tm_sf(col="black", size=0.3)
 
@@ -618,7 +627,7 @@ ggplot(df_sf) +
   coord_sf(crs=googlecrs) # required 
 
 
-##  Just for fun let's utilize the eks package for density estimates
+##  Now use the eks package for density estimates
 
 Sta_den <- eks::st_kde(df_sf) # calculate density
 
@@ -632,6 +641,7 @@ ggplot() +
   geom_sf(data=eks::st_get_contour(Sta_den,
                                    cont=c(20,40,60,80)),   
           aes(fill=eks::label_percent(contlabel)), alpha=0.4) +
+  #   Legend
   colorspace::scale_fill_discrete_sequential(name = "Density Percentile") +
   #   Add a scale bar
   ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
@@ -646,7 +656,9 @@ ggplot() +
 
 ```
 
-Now for Leaflet maps
+Now for Leaflet maps which I do not recommend. The heatmap is weirdly dependent
+on the map scale. Much better in my opinion to calculate the contours in eks and
+overlay them.
 
 ```{r leaflet density}
 
@@ -720,6 +732,7 @@ Base_tmap_osm <- tmaptools::read_osm(bbox, type="osm")
 
 tmap::tm_shape(Base_tmap_osm) +
     tmap::tm_rgb() +
+    tmap::tm_graticules()+
   tmap::tm_shape(df_sf) + 
     tmap::tm_sf(col="black", size=0.3) +
   tmap::tm_shape(contours) +
@@ -737,6 +750,7 @@ Base_tmap_osm_xy <- stars::st_transform_proj(Base_tmap_osm, crs=localcrs)
 
 tmap::tm_shape(Base_tmap_osm_xy) +
     tmap::tm_rgb() +
+    tmap::tm_graticules()+
 tmap::tm_shape(df_xy) + 
   tmap::tm_sf(col="black", size=0.3)+
 tmap::tm_shape(sf::st_transform(contours, crs=localcrs)) +
@@ -758,7 +772,8 @@ else was just preliminary to getting to this point.
 
 This is complicated. Because we want a basemap underneath, the basemap is in
 EPSG:3857, the Spherical Pseudo-Mercator projection, and is basically just an
-image.
+image. In order to plot points and contours on the basemap, those need 
+to be in lat-long to be compatible with my preferred basemap.
 
 But gridding schemes want to be in X-Y.
 
@@ -844,7 +859,12 @@ grd_raster <- raster::raster(xmn=bbox_xy["xmin"]-500, xmx=bbox_xy["xmax"]+1000,
 ggplot() +
   geom_point(data=grd_df, aes(x=X, y=Y)) +
   geom_sf(data=grd_sf, shape="+", color="red", size=4) +
-  geom_sf(data=sf::st_as_sf(terra::as.points(grd_terra)), shape="o", size=5, color="green")
+  geom_sf(data=sf::st_as_sf(terra::as.points(grd_terra)), 
+          shape="o", size=5, color="green") +
+  #     "zoom in" on a corner to see better
+  coord_sf(xlim = c(XYmin[[1]][1], XYmin[[1]][1]+10000),
+           ylim = c(XYmin[[1]][2], XYmin[[1]][2]+10000),
+           expand = FALSE)
 
 ```
 
@@ -906,8 +926,8 @@ ggplot() +
 
 
 How do we decide to use any particular power for the weighting? Let's try a
-number of values and see what changes. This section was particularly inspired by
-@Dorman and @Gimond.
+number of values and see what changes in a "leave-one-out" analysis. This
+section was particularly inspired by @Dorman and @Gimond.
 
 As the final map shows, there are areas where adjacent points have wide
 variation, and the algorithm struggles to fit those data. This is a rough
@@ -919,8 +939,8 @@ weighting power of 1.5 is very gentle, and will tend to allow points at some
 distance to have an undue influence on the result. With a rough surface, as we
 will see more explicitly later on from the variogram, the correlation distance
 should be small, and a larger weighting power will accomplish that. Partly
-because of that intuition, I have calculated the optimum weighting power base on
-both the Root Mean Square error (RMS), and the Mean Absolute Error (MAE). I
+because of that intuition, I have calculated the optimum weighting power based
+on both the Root Mean Square error (RMS), and the Mean Absolute Error (MAE). I
 prefer the latter.
 
 ```{r validation and testing}
@@ -972,7 +992,7 @@ RMS %>%
     labs(title="RMS Error vs. Inverse Distance Weighting Power")
 
 #     However, RMS error is dominated by outliers, and gives a model that feels
-#     wrong. Let's try Mean absolute error instead
+#     wrong. Let's try Mean Absolute Error instead
 
 MAE <- Validate %>% 
   group_by(power) %>% 
@@ -1023,8 +1043,9 @@ contour breaks may change between plots.
 
 ```{r IDW contours}
 
-#Make some pretty breaks for contour intervals based on the data brks <-
-#classInt::classIntervals(pretty(n=10, x=as.vector(interp_IDW_stars[[1]])), n=8)
+# Make some pretty breaks for contour intervals based on the data 
+# brks <- classInt::classIntervals(pretty(n=10,
+# x=as.vector(interp_IDW_stars[[1]])), n=8)
 
 #     Or define the breaks - we'll use these to have consistent contours between
 #     plots
@@ -1085,7 +1106,7 @@ ggplot() +
 
 ##        Smoothing grids and contours
 
-Note that the smoothing step I have shown is actually inappropriate for this
+Note that the smoothing step I show below is actually inappropriate for this
 data - I assume that the rainfall measurements are basically error-free.
 However, if you had a dataset where you knew that there was substantial error in
 some of the measurements, then smoothing the fit might make a lot of sense.
@@ -1117,7 +1138,7 @@ For smoothr - the package to smooth contours, the reference is @Strimas-Mackey.
 
 foo_terra <- terra::rast(interp_IDW_stars) 
 
-#   Let's do a 3x3 mean
+#   Let's do a 3x3 mean (could also use a median in some circumstances)
 foo_sm <- terra::focal(foo_terra, w=3, fun=mean)
 
 #   Create contours again
@@ -1137,8 +1158,10 @@ ggplot() +
   scale_fill_gradientn(colors=rainbow(5), limits=c(0,3), na.value="transparent") +
   geom_sf(data=Contours_IDW, color="red") +
   geom_sf(data=Contours_sm2, color="blue") +
-  annotate("text", label="C.I. = 0.5 inches of rain", x=bbox_xy[['xmin']]+5000, 
-                                              y=bbox_xy[['ymin']]-1000) +
+  annotate("text", label="C.I. = 0.5 inches of rain", 
+           x=bbox_xy[['xmin']]+1000, 
+           y=bbox_xy[['ymin']]-1000,
+           hjust="inward", size = 3) +
   labs(title="Final X-Y plot of Inverse Weighted data",
        subtitle="Red contours are original, Blue are final, color fill is smoothed data.")
 ```
@@ -1179,9 +1202,15 @@ ggplot() +
                                               style="ticks"),
     location="br", width_hint=0.2, bar_cols=1) +
   #   Add CI annotation at specified window coordinates
-  annotation_custom(grid::textGrob(label = "C.I. = 0.5 inches of rain",
-                                 x = unit(0.2, "npc"),
-                                 y = unit(0.02, "npc"))) +
+  annotate("text", label="C.I. = 0.5 inches of rain", 
+           x=-Inf, 
+           y=-Inf,
+           hjust="inward", vjust="inward", size = 3) +
+  # annotation_custom(grid::textGrob(label = "C.I. = 0.5 inches of rain",
+  #                                  just=c("left", "bottom"),
+  #                                  gp=grid::gpar(fontsize=6),
+  #                                x = unit(0.2, "npc"),
+  #                                y = unit(0.02, "npc")))+
   geom_contour(data=as_tibble(foo_sm_star_LL),
                aes(x=x, y=y, z=Rain)
                )+
@@ -1234,8 +1263,7 @@ tmap::tm_scale_bar(breaks = c(0, 5, 10), text.size = 1,
 ##     Kriging
 
 Kriging is a big topic, so I will not explain much here. Good references to
-start with would be
-@Gimond, @Wilke, @rspatial
+start with would be @Gimond, @Wilke, and @rspatial.
 
 There are a few steps to doing Kriging. The algorithm assumes that the data has
 no regional trend - that at some distance (called the range) the data
@@ -1245,7 +1273,9 @@ polynomial to the data and subtracting it.
 
 There were examples of doing this as part of the kriging process itself, but I
 could not get them to work. In any event, I like to look at the individual steps
-to make sure they make sense and that things are working properly.
+to make sure they make sense and that things are working properly. That and
+fitting a drift function is just one more way to get a feel for the data, which
+is often helpful.
 
 Key to the process is fitting a variogram model. Intuitively, the range is the
 distance beyond which the data points do not correlate. The nugget has several
@@ -1275,7 +1305,8 @@ So briefly, the process is as follows:
 
 It is pretty clear that the 2nd order fit has a serious overshoot problem in the
 NW corner, so choosing the linear fit is pretty easy. Which is almost always the
-case.
+case. It occurs to me that it might be even better to fit a polynomial using
+absolute error rather than a least-squares, to add some outlier protection.
 
 ```{r Drift}
 
@@ -1519,8 +1550,10 @@ ggplot() +
   geom_sf(data=df_xy, color="Black", size=1) +
   geom_sf(data=Contours_Krig, color="red") +
   geom_sf(data=Contours_sm, color="blue") +
-  annotate("text", label="C.I. = 0.5 inches of rain", x=bbox_xy[['xmin']]+5000, 
-                                              y=bbox_xy[['ymin']]-1000) +
+  annotate("text", label="C.I. = 0.5 inches of rain", 
+           x=bbox_xy[['xmin']]+5000, 
+           y=bbox_xy[['ymin']]-1000, 
+           hjust="inward", vjust="inward", size = 3) +
   labs(title="Final X-Y plot of Krigged data",
        subtitle="Red contours are original, Blue are final, color fill is smoothed data.")
 
@@ -1543,9 +1576,13 @@ ggplot() +
   ggspatial::annotation_scale(data=df_sf, aes(unit_category="imperial", style="ticks"),
     location="br", width_hint=0.2, bar_cols=1) +
   #   Add CI annotation at specified window coordinates
-  annotation_custom(grid::textGrob(label = "C.I. = 0.5 inches of rain",
-                                 x = unit(0.2, "npc"),
-                                 y = unit(0.02, "npc"))) +
+  annotate("text", label="C.I. = 0.5 inches of rain", 
+           x=-Inf, 
+           y=-Inf,
+           hjust="inward", vjust="inward", size = 3) +
+  # annotation_custom(grid::textGrob(label = "C.I. = 0.5 inches of rain",
+  #                                x = unit(0.2, "npc"),
+  #                                y = unit(0.02, "npc"))) +
   coord_sf(crs=googlecrs) + # required 
   #   Add title
   labs(title="Rainfall Measurements",
@@ -1559,7 +1596,7 @@ ggplot() +
 Sometimes splines work really well, but the roughness of this dataset is so
 large that they overshoot and fail rather miserably. But still worth trying out.
 If the input data were much smoother, they would do a dandy job. It is sad
-though that it still requires sp objects, and doesn't (yet?) support sf.
+though that interp still requires sp objects, and doesn't (yet?) support sf.
 
 The Akima performs rather poorly with bad overshoot at the edges and in the
 interior of the map. I don't know enough about it to even guess at how one might
@@ -1675,6 +1712,37 @@ ggplot() +
 
 ##   Summary
 
+As I noted in the beginning, the whole area of mapping and geostatistics in R
+has been undergoing a significant revolution over the past few years, which is
+both good and bad. It means that many of the old examples one might find on
+the web are largely out of date, and so figuring out what the best modern path
+might be can be a challenge. There are some very helpful new reference works
+appearing, like @Lovelace, that can help greatly in sorting through the mess.
 
+There are still some of the more niche functions that have yet to be ported
+to the more modern infrastructure - I have high hopes that that will occur in
+the not too distant future.
 
+One general critique I have is that it is often not clear (especially with the
+basemaps) what the coordinate system for the object actually is. This should be
+more obvious - and well-documented. In general I would say that in the
+documentation, with some exceptions, there is too little discussion of how
+coordinate systems are handled, what the restrictions and assumptions are. For a
+topic so fundamental, it  seems to be ignored. In part I think that there is
+a bit too much implicit and not enough explicit. 
 
+On the maps themselves, a standard label explicitly noting the geodetics for the
+map as plotted would be really helpful. As a professional map-maker, that was
+something that our software did automatically - in fact, you had no choice.
+
+It would be really sweet if we had a mapping package (tmap or ggplot) that also
+combined the nice contour labeling capabilities of metR, the contour smoothing
+capabilities of smoothr, and worked in both X-Y and Lat-Long space.
+
+Finally, some years ago when I made my first maps in R with ggmap, tools were
+quite limited and it was a challenge to move beyond the basics. Thanks to the
+efforts of many people, we now have almost an embarrassment of riches, and a
+very capable system at hand. Many thanks to all who have contributed to the
+development of the current mapping environment in R.
+
+## References
