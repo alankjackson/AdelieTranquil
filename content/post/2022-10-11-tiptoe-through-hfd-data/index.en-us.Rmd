@@ -111,7 +111,194 @@ Keyfiles <- readRDS(paste0("/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/
 dfnew <- left_join(df, Keyfiles, by="Key")
 dfnew <- sf::st_as_sf(dfnew)
 
-dfnew_sum <- left_join(df_sum, Keyfiles, by="Key")
-dfnew_sum <- sf::st_as_sf(dfnew_sum)
+#     Many have no Key, but some have an address. Geocode and then match to Key
+################################    later todo
+
+dfnew_sum <- dfnew %>% # left_join(df, Keyfiles, by="Key") %>% 
+  filter(!is.na(i)) %>%
+  group_by(Key, Category) %>% 
+    summarize(Key=first(Key), 
+              Category=first(Category), 
+              n=n()) 
+#dfnew_sum <- sf::st_as_sf(dfnew_sum)
 
 ```
+
+##    Let's make some maps
+
+```{r maps}
+
+
+dfnew %>%
+  leaflet() %>% 
+  addTiles() %>% 
+  addMarkers(clusterOptions = markerClusterOptions(),
+             label=~as.character(Key))
+
+dfnew %>%
+  filter(str_detect(Incident_type, "Dumpster")) %>% 
+  leaflet() %>% 
+  addTiles() %>% 
+  addMarkers(clusterOptions = markerClusterOptions())
+
+dfnew %>%
+  filter(str_detect(Incident_type, "CRASH")) %>% 
+  leaflet() %>% 
+  addTiles() %>% 
+  addMarkers(clusterOptions = markerClusterOptions(),
+             label=~as.character(Key))
+
+dfnew %>%
+  filter(str_detect(Incident_type, "Fire")) %>% 
+  leaflet() %>% 
+  addTiles() %>% 
+  addMarkers(clusterOptions = markerClusterOptions(),
+             label=~as.character(Key))
+
+```
+###  Let's make contour maps
+
+```{r contour maps}
+
+googlecrs <- "EPSG:4326" # lat long
+CoH_crs <- "EPSG:2278" # X-Y
+
+#   Let's define a bounding box (an AOI) based on the data (in Lat-Long)
+
+bbox <- sf::st_bbox(dfnew_sum)
+
+#   Expand box by 20% to give a little extra room
+Dx <- (bbox[["xmax"]]-bbox[["xmin"]])*0.1
+Dy <- (bbox[["ymax"]]-bbox[["ymin"]])*0.1
+bbox["xmin"] <- bbox["xmin"] - Dx
+bbox["xmax"] <- bbox["xmax"] + Dx
+bbox["ymin"] <- bbox["ymin"] - Dy
+bbox["ymax"] <- bbox["ymax"] + Dy
+
+bb <- c(bbox["xmin"], bbox["ymin"], bbox["xmax"], bbox["ymax"])
+
+#     Basemap
+
+Base_basemapR <- basemapR::base_map(bbox, basemap="mapnik", increase_zoom=2)
+
+#     Density maps
+
+Sta_den <- eks::st_kde(dfnew_sum) # calculate density
+
+#   Lay down basemap
+ggplot() +
+  #   this is the best looking basemap
+  Base_basemapR +
+  #   Add points
+  geom_sf(data=dfnew_sum) +
+  #   Create filled density "contours" 
+  geom_sf(data=eks::st_get_contour(Sta_den,
+                                   cont=c(20,40,60,80)),   
+          aes(fill=eks::label_percent(contlabel)), alpha=0.4) +
+  #   Legend
+  colorspace::scale_fill_discrete_sequential(name = "Density Percentile") +
+  #   Add a scale bar
+  ggspatial::annotation_scale(data=dfnew_sum, aes(unit_category="imperial", style="ticks"),
+    location="br", width_hint=0.2, bar_cols=1) +
+ #   This is an alternative way to add a scale
+  #   Add title
+  ggtitle("Density of Measurements") +
+  labs(subtitle="Density using EKS") +
+  coord_sf(crs=googlecrs) # required 
+
+
+```
+
+###   Build grid and fit data
+
+```{r grid data}
+
+#     XY box
+
+bbox_xy = bbox %>%
+  sf::st_as_sfc() %>%
+  sf::st_transform(crs = CoH_crs) %>%
+  sf::st_bbox()
+
+#     sfc POINT file
+grd_sf <- sf::st_make_grid(x=bbox_xy,
+                                  what="corners",
+                                  cellsize=1000,
+                                  crs=CoH_crs
+                                  )
+#   Project data to XY
+
+df_xy <- sf::st_transform(dfnew_sum, crs=CoH_crs)
+df_xy_ems <- df_xy %>% 
+  filter(Category=="EMS")
+
+#     Create interpolator and interpolate to grid
+
+fit_IDW <- gstat::gstat( 
+  formula = n ~ 1,
+  data = df_xy_ems, 
+  #nmax = 10, nmin = 3, # can also limit the reach with these numbers
+  set = list(idp = 2) # inverse distance power
+)
+
+#   Use predict to apply the model fit to the grid (using the data frame grid
+#   version)
+
+#           We set debug.level to turn off annoying output
+interp_IDW <- predict(fit_IDW, grd_sf, debug.level=0)
+
+#   Convert to a stars object so we can use the contouring in stars
+interp_IDW_stars <- stars::st_rasterize(interp_IDW %>% dplyr::select(N=var1.pred, geometry))
+
+#   Quick sanity check, and can use to adjust the distance power Looks pretty
+#   good - most input points look close to the output grid points, with some
+#   notable exceptions. The red point to the north is possibly bad data. Easier
+#   to judge from areal displays.
+ggplot() +
+  #   geom_stars is a good way to display a grid
+  stars::geom_stars(data=interp_IDW_stars) +  
+  geom_sf(data=df_xy, aes(color=n), size=2) +
+  geom_sf(data=df_xy, color="Black", size=.1) +
+  #     This is for the raster color fill
+  scale_fill_gradientn(colors=rainbow(5), limits=c(1,max(df_xy_ems$n, na.rm=TRUE))) +
+  #     This is for the original data points
+  scale_color_gradientn(colors=rainbow(5), limits=c(1,max(df_xy_ems$n, na.rm=TRUE))) +
+  labs(title="Inverse Distance Weighting, Power = 2")
+
+#     MAE
+#   Do a leave-one-out analysis for a variety of weighting powers
+
+Validate <- NULL
+for (power in (1:6)*0.5) {
+  my_fit <- gstat::gstat(formula = n ~ 1, data = df_xy,  set = list(idp = power))
+  foo <- sf::st_as_sf(gstat::gstat.cv(my_fit, debug.level=0, verbose=FALSE)) %>% 
+    rename(Observed=observed, Predicted=var1.pred ) %>% 
+    mutate(power=power) 
+  
+  Validate <- bind_rows(Validate, foo)
+}
+MAE <- Validate %>% 
+  group_by(power) %>% 
+  summarise(MAE=(sum(abs(Predicted-Observed)) / n()))
+
+MAE %>% 
+  ggplot(aes(x=power, y=MAE)) +
+    geom_point() +
+    geom_smooth() +
+    labs(title="MAE Error vs. Inverse Distance Weighting Power")
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
