@@ -25,7 +25,8 @@ library(stringr)
 library(sf)
 library(leaflet)
 library(leaflet.extras)
-
+library(htmlwidgets)
+library(htmltools)
 
 path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/HFD_Incidents/"
 
@@ -165,19 +166,19 @@ foo <- pm_replace(foo2, source=foo)
 match <- NULL
 for (i in 1:nrow(foo)){ # match to get zipcode
   if (is.na(foo[i,]$pm.street)) {next}
-  print(paste("i=",i))
+  #print(paste("i=",i))
   tmp <- GeocodeHou::repair_zipcode(foo[i,]$pm.house, 
                         foo[i,]$pm.preDir,
                         foo[i,]$pm.street,
                         foo[i,]$pm.streetSuf, 
                         foo[i,]$Zip)
   if (tmp$Success){ #   success
-    print(paste("Success", tmp$Lat, tmp$Lon, tmp$New_zipcode))
+    #print(paste("Success", tmp$Lat, tmp$Lon, tmp$New_zipcode))
     match <- cbind(foo[i,], tmp) %>% 
       select(pm.house, pm.preDir, pm.street, pm.streetSuf, New_zipcode, Seq, Lat, Lon) %>% 
       rbind(., match)
   } else { #  Fail exact match
-    print(paste("Failed", tmp$Fail))
+    #print(paste("Failed", tmp$Fail))
   }
 }
 
@@ -231,6 +232,23 @@ Looking at EMS calls, since I want to compare those to the income to look
 for anomalies, we restrict the time to night-time since that is when
 income is meaningful - people are largely at home in bed.
 
+So what about the outliers? The Keymap squares are a bit unwieldy, so I can
+only guess at what is influencing each square (they are one mile square), but
+here are my guesses for the top three outliers.
+
+* Star of Hope Shelter and New Hope Housing are really the only occupied
+buildings in the area.
+    + ![](../../../public/img/Star_of_Hope.png)
+* The Cityscape apartment complex has been a problem for the city for some time,
+articles in the Chronicle.
+    + ![](../../../public/img/Cityscape.png)
+* Really have no idea. Mostly an industrial area. There are the Fountains at 
+Almeda apartments, but no news stories about them. A mystery.  
+    + ![](../../../public/img/FountainsAtAlmeda.png)
+    
+This reveals a general problem with much of this analysis. The one mile square
+resolution of the data is just too coarse to make many good conclusions.
+
 ```{r crossplots}
 
 df_EMS_day <- df_all_poly %>% 
@@ -262,15 +280,18 @@ foo %>%
 ```{r some polygons}
 
 # Produces a ggplot object
-bbox <- osmdata::getbb(place_name = "Houston")
-sf::st_bbox()
+bbox <- tmaptools::bb(osmdata::getbb(place_name = "Houston"))
+
 Base_basemapR <- basemapR::base_map(bbox, basemap="mapnik", increase_zoom=2)
 
 #   First just raw numbers
 
-df_EMS_day <- df_all_poly %>% 
+df_EMS <- df_all_poly %>% 
   filter(Category=="EMS") %>% 
-  filter(n>10) %>% 
+  filter(n>10)  
+
+
+df_EMS_day <- df_EMS %>% 
   filter(Daytime)
 
 df_EMS_day %>% 
@@ -278,11 +299,10 @@ df_EMS_day %>%
 ggplot() +
   Base_basemapR +
   geom_sf(aes(fill=n), alpha=0.3)+
-  scale_fill_gradientn(colors=rainbow(5), limits=c(50,300))
+  scale_fill_gradientn(colors=rainbow(5), limits=c(50,300)) + 
+  ggtitle("Total Daytime EMS Calls per Keymap Square")
 
-df_EMS_nite <- df_all_poly %>% 
-  filter(Category=="EMS") %>% 
-  filter(n>10) %>% 
+df_EMS_nite <- df_EMS %>% 
   filter(!Daytime)
 
 df_EMS_nite %>% 
@@ -290,22 +310,17 @@ df_EMS_nite %>%
 ggplot() +
   Base_basemapR +
   geom_sf(aes(fill=n), alpha=0.3)+
-  scale_fill_gradientn(colors=rainbow(5), limits=c(50,300))
+  scale_fill_gradientn(colors=rainbow(5), limits=c(50,300))+
+  ggtitle("Total Nighttime EMS Calls per Keymap Square")
 
-#   Improved scales
-
-  pal <- colorQuantile(palette = heat.colors(5), 
-                       domain = df_EMS$n, 
-                       n = 5, 
-                       na.color = "transparent", 
-                       alpha = FALSE, 
-                       right = FALSE) 
 
 df_EMS %>% 
 ggplot() +
   Base_basemapR +
   geom_sf(aes(fill=n), alpha=0.3)+
-  scale_fill_gradientn(colors=pal(df_EMS$n))
+  #scale_fill_gradientn(colors=pal(df_EMS$n))+
+  scale_fill_gradientn(colors=rainbow(8), limits=c(0,800))+
+  ggtitle("Total EMS Calls per Keymap Square")
 
 
 #     Let's do per capita
@@ -317,7 +332,8 @@ df_EMS %>%
   ggplot() +
     Base_basemapR +
     geom_sf(aes(fill=n), alpha=0.3)+
-    scale_fill_gradientn(colors=rainbow(5), limits=c(10,200))
+    scale_fill_gradientn(colors=rainbow(5), limits=c(10,200))+
+    ggtitle("Blocks with no people (airports, outside county)")
   
 #   These are either the airport or outside of Harris County
 
@@ -329,13 +345,10 @@ df_EMS_nite %>%
   ggplot() +
     Base_basemapR +
     geom_sf(aes(fill=percap), alpha=0.3)+
-    scale_fill_gradientn(colors=rainbow(5), limits=c(0, 2))
+    scale_fill_gradientn(colors=rainbow(5), limits=c(0, 0.1))+
+    ggtitle("Per Capita Nighttime EMS Calls per Keymap Square")
   
 #   Let's look at blocks with real population.
-
-df_EMS_nite %>% 
-  filter(!is.na(Pop)) %>% 
-  summary()
 
 df_EMS_nite %>% 
   filter(!is.na(Pop)) %>% 
@@ -345,46 +358,114 @@ df_EMS_nite %>%
   ggplot() +
     Base_basemapR +
     geom_sf(aes(fill=percap), alpha=0.3)+
-    scale_fill_gradientn(colors=rainbow(5), limits=c(0.01, 0.1))
+    scale_fill_gradientn(colors=rainbow(5), limits=c(0.01, 0.1))+
+    ggtitle("Per Capita Nighttime EMS Calls per Keymap Square")+ 
+    labs(subtitle="For Population > 1000 in square") 
 
 ```
 
 
-##    Let's make some maps
+##    Interactive maps of other incidents
 
-```{r maps, eval=FALSE}
+These sort of Leaflet maps are not the best for seeing patterns, but on the 
+other hand, for the most part, I don't see any particular patterns emerging,
+except perhaps for crashes. But for that the TxDOT data is probably a better 
+source.
 
-########################################
-knitr::knit_exit()
-########################################
+```{r leaflet maps}
 
+#  Stuff to add title to Leaflet map
+
+tag.map.title <- tags$style(HTML("
+  .leaflet-control.map-title { 
+    transform: translate(-50%,20%);
+    position: fixed !important;
+    left: 50%;
+    text-align: center;
+    padding-left: 10px; 
+    padding-right: 10px; 
+    background: rgba(255,255,255,0.75);
+    font-weight: bold;
+    font-size: 20;
+  }
+"))
+
+title <- tags$div(
+  tag.map.title, HTML("All Calls"))  
 dfnew %>%
   leaflet() %>% 
   addTiles() %>% 
   addMarkers(clusterOptions = markerClusterOptions(),
-             label=~as.character(Key))
+             label=~as.character(Key)) %>% 
+  addControl(title, position = "topright", className="map-title")
 
+title <- tags$div(
+  tag.map.title, HTML("Dumpster Fires"))  
 dfnew %>%
   filter(str_detect(Incident_type, "Dumpster")) %>% 
   leaflet() %>% 
   addTiles() %>% 
-  addMarkers(clusterOptions = markerClusterOptions())
+  addMarkers(clusterOptions = markerClusterOptions()) %>% 
+  addControl(title, position = "topright", className="map-title")
 
+title <- tags$div(
+  tag.map.title, HTML("Crashes"))  
 dfnew %>%
   filter(str_detect(Incident_type, "CRASH")) %>% 
   leaflet() %>% 
   addTiles() %>% 
   addMarkers(clusterOptions = markerClusterOptions(),
-             label=~as.character(Key))
+             label=~as.character(Key)) %>% 
+  addControl(title, position = "topright", className="map-title")
 
+title <- tags$div(
+  tag.map.title, HTML("Fires"))  
 dfnew %>%
   filter(str_detect(Incident_type, "Fire")) %>% 
   leaflet() %>% 
   addTiles() %>% 
   addMarkers(clusterOptions = markerClusterOptions(),
-             label=~as.character(Key))
+             label=~as.character(Key)) %>% 
+  addControl(title, position = "topright", className="map-title")
 
 ```
+
+##        Some final maps
+
+Let's make nice static maps for the previous categories, just to see what we can 
+see.
+
+```{r final maps}
+
+df_all_poly %>% 
+  filter(Daytime) %>% 
+  group_by(Key) %>% 
+    summarize(n=sum(n)) %>% 
+  ggplot() +
+    Base_basemapR +
+    geom_sf(aes(fill=n), alpha=0.3)+
+    scale_fill_gradientn(colors=rainbow(5), limits=c(0.0, 100))+
+    ggtitle("Total Daytime Calls per Keymap Square") 
+
+df_all_poly %>% 
+  filter(!Daytime) %>% 
+  ggplot() +
+    Base_basemapR +
+    geom_sf(aes(fill=n), alpha=0.3)+
+    scale_fill_gradientn(colors=rainbow(5), limits=c(0.0, 100))+
+    ggtitle("Total Nighttime Calls per Keymap Square") 
+
+
+
+```
+
+
+
+
+
+
+
+
 
 
 
