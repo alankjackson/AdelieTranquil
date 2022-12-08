@@ -1,0 +1,170 @@
+---
+title: "Parking Lot Study"
+author: "Alan Jackson"
+date: "2022-12-06"
+slug: parking-lot-study
+categories: 
+- Infrastructure
+tags:
+- Houston
+- Geostatistics
+- Mapping
+keywords: tech
+comments: no
+showMeta: no
+showActions: no
+output:
+  html_document:
+    code_folding: hide
+---
+
+##    Parking Lots, Parking Minimums, and All That
+
+In 2019, Houston city council passed a ground-breaking ordinance that removed
+parking minimums for parts of Midtown and EaDo. The city’s climate action plan,
+which was adopted in 2020, calls for an end to all minimum parking requirements
+by 2030.
+
+I thought it would be interesting to look at parking in The Heights, so I put
+together this little study. Originally I wanted to do the entire city, but I
+could not find a source of data on parking lots covering the whole city, so
+that was out. For this study I used OpenStreetMap, and added polygons for the
+parking lots in the west Heights. The editor is pretty easy to use, but that was
+still quite a few hours of work. I basically cover the area delineated by 20th
+street to the north, 11th street to the south, Durham to the west, and Heights
+Boulevard to the east.
+
+One item of interest in the Heights is that the area along 19th street, which is
+largely businesses, has no parking minimums because it was built prior to those
+requirements. We'll look at the different business corridors to see how they
+compare.
+
+I'm also interested in how many people have easy access to businesses, either by
+walking or bicycling, and also hoe much potential property tax revenue is being
+lost by covering land with parking lots instead of buildings.
+
+A good overview of many of the issues may be found in [this
+paper](https://kinder.rice.edu/urbanedge/less-space-parking-crucial-step-toward-walkability-houston)
+from the Kinder Institute.
+
+```{r setup, include=FALSE, echo=FALSE}
+
+library(tidyverse)
+library(GeocodeHou)
+library(postmastr)
+
+google_crs <- "EPSG:4326" # lat long
+CoH_crs <- "EPSG:2278" # X-Y
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##   Read in the necessary datasets
+
+
+###  First let's establish an AOI 
+
+The buffer is defined along the streets of interest, and the AOI is 50% larger
+to ensure we grab the needed data.
+
+```{r AOI}
+###{r initialize, class.source = 'fold-show'}
+
+#######################################
+#   AOI
+#######################################
+
+#   Start at 19th and Shepherd, east to Yale, south to 11th, west to Shepherd
+Buffer_coord <- as_tibble(rbind(c(29.802783, -95.410146),
+                      c(29.802935, -95.399204),
+                      c(29.790674, -95.398971),
+                      c(29.790514, -95.409865),
+                      c(29.802783, -95.410146)))
+lines <- Buffer_coord %>%
+  sf::st_as_sf(coords = c("V2", "V1"), crs = google_crs) %>%
+  summarise(geometry = sf::st_combine(geometry)) %>%
+  sf::st_cast("LINESTRING")
+
+bbox <- sf::st_bbox(sf::st_transform(lines, crs=CoH_crs))
+xrange <- bbox$xmax - bbox$xmin # range of x values
+yrange <- bbox$ymax - bbox$ymin # range of y values
+
+bbox[1] <- bbox[1] - (0.5 * xrange) # xmin - left
+bbox[3] <- bbox[3] + (0.5 * xrange) # xmax - right
+bbox[2] <- bbox[2] - (0.5 * yrange) # ymin - bottom
+bbox[4] <- bbox[4] + (0.5 * yrange) # ymax - top
+
+leaflet::leaflet() %>%
+  leaflet::addTiles() %>% # OpenStreetMap by default
+  leaflet::addPolylines(data=sf::st_transform(lines, crs=google_crs),
+                   opacity=0.5,
+                   fillOpacity = 0.3) %>% 
+  leaflet::addPolygons(data=sf::st_transform(sf::st_as_sfc(bbox), crs=google_crs),
+                   color="red",
+                   weight=2,
+                   opacity=0.5,
+                   fillOpacity = 0.3)   
+```
+
+###     Load parking lots
+
+From OpenStreetMap we will load the digitized parking lots that I digitized
+for the study.
+
+```{r load parking lots}
+#######################################
+#   Parking lots
+#######################################
+
+parking <- 
+  osmdata::getbb(place_name = "Houston") %>% 
+  osmdata::opq(timeout = 50) %>% # Build query
+  osmdata::add_osm_feature(key = "amenity", 
+                           value = "parking" 
+                            ) %>% 
+  osmdata::osmdata_sf(quiet=FALSE) # turn into an sf file
+
+#   Extract parking lots in the AOI
+
+Parking_TF <- sf::st_contains( sf::st_transform(
+                                    sf::st_as_sfc(bbox, crs=google_crs),
+                                    crs=CoH_crs),
+                               sf::st_transform(
+                                    sf::st_as_sfc(parking$osm_polygons,
+                                              crs=google_crs),
+                                    crs=CoH_crs))
+
+Parking_bb <- parking$osm_polygons[unlist(Parking_TF),]
+
+leaflet::leaflet() %>%
+  leaflet::addTiles() %>% # OpenStreetMap by default
+  leaflet::addPolygons(data=parking$osm_polygons,
+                   opacity=0,
+                   fillOpacity = 1)
+```
+
+
+
+```{r  load census data}
+#######################################
+#   Census data
+#######################################
+
+path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/Census_data/"
+
+
+#######################################
+#   HCAD data
+#######################################
+
+
+```
+
+
+
+
+
+
+
+
+
