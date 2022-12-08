@@ -138,7 +138,8 @@ Parking_bb <- parking$osm_polygons[unlist(Parking_TF),]
 
 leaflet::leaflet() %>%
   leaflet::addTiles() %>% # OpenStreetMap by default
-  leaflet::addPolygons(data=parking$osm_polygons,
+  #leaflet::addPolygons(data=parking$osm_polygons,
+  leaflet::addPolygons(data=Parking_bb,
                    opacity=0,
                    fillOpacity = 1)
 ```
