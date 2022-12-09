@@ -40,7 +40,7 @@ requirements. We'll look at the different business corridors to see how they
 compare.
 
 I'm also interested in how many people have easy access to businesses, either by
-walking or bicycling, and also hoe much potential property tax revenue is being
+walking or bicycling, and also how much potential property tax revenue is being
 lost by covering land with parking lots instead of buildings.
 
 A good overview of many of the issues may be found in [this
@@ -67,7 +67,7 @@ knitr::opts_chunk$set(echo = TRUE)
 The buffer is defined along the streets of interest, and the AOI is 50% larger
 to ensure we grab the needed data.
 
-```{r AOI}
+```{r AOI, message=FALSE, warning=FALSE}
 ###{r initialize, class.source = 'fold-show'}
 
 #######################################
@@ -80,27 +80,48 @@ Buffer_coord <- as_tibble(rbind(c(29.802783, -95.410146),
                       c(29.790674, -95.398971),
                       c(29.790514, -95.409865),
                       c(29.802783, -95.410146)))
-lines <- Buffer_coord %>%
+
+Study_box <- Buffer_coord %>%
   sf::st_as_sf(coords = c("V2", "V1"), crs = google_crs) %>%
   summarise(geometry = sf::st_combine(geometry)) %>%
   sf::st_cast("LINESTRING")
 
-bbox <- sf::st_bbox(sf::st_transform(lines, crs=CoH_crs))
-xrange <- bbox$xmax - bbox$xmin # range of x values
-yrange <- bbox$ymax - bbox$ymin # range of y values
+AOI <- Study_box %>% #  enlarge by 15,000 feet
+  sf::st_transform(crs=CoH_crs) %>% 
+  sf::st_line_sample(n=250) %>% 
+  sf::st_buffer(dist=10000, endCapStyle="SQUARE")
 
-bbox[1] <- bbox[1] - (0.5 * xrange) # xmin - left
-bbox[3] <- bbox[3] + (0.5 * xrange) # xmax - right
-bbox[2] <- bbox[2] - (0.5 * yrange) # ymin - bottom
-bbox[4] <- bbox[4] + (0.5 * yrange) # ymax - top
+bbox <- sf::st_bbox(sf::st_transform(lines, crs=CoH_crs))
+#AOI <- bbox
+
+#bbox <- expand_bb(bbox, 0.5)
+#AOI <- expand_bb(AOI, 2)
+
+
+#   Create a ggplot basemap object
+
+Base_basemapR <- basemapR::base_map(sf::st_bbox(
+                                      sf::st_transform(AOI, crs=google_crs)),
+                                    basemap="mapnik", increase_zoom=2)
+ggplot() +
+  Base_basemapR +
+  geom_sf(data=sf::st_transform(AOI, crs=google_crs), aes(color="red"), alpha=0.0)+
+  geom_sf(data=Study_box, aes(fill="red"), alpha=0.3)#+
+  # ggtitle("Total Daytime EMS Calls per Keymap Square",
+  #         subtitle=Time_period)
 
 leaflet::leaflet() %>%
   leaflet::addTiles() %>% # OpenStreetMap by default
-  leaflet::addPolylines(data=sf::st_transform(lines, crs=google_crs),
+  leaflet::addPolylines(data=sf::st_transform(Study_box, crs=google_crs),
                    opacity=0.5,
                    fillOpacity = 0.3) %>% 
   leaflet::addPolygons(data=sf::st_transform(sf::st_as_sfc(bbox), crs=google_crs),
                    color="red",
+                   weight=2,
+                   opacity=0.5,
+                   fillOpacity = 0.3)   %>% 
+  leaflet::addPolygons(data=sf::st_transform(AOI, crs=google_crs),
+                   color="green",
                    weight=2,
                    opacity=0.5,
                    fillOpacity = 0.3)   
@@ -111,7 +132,7 @@ leaflet::leaflet() %>%
 From OpenStreetMap we will load the digitized parking lots that I digitized
 for the study.
 
-```{r load parking lots}
+```{r load parking lots, message=FALSE, warning=FALSE}
 #######################################
 #   Parking lots
 #######################################
@@ -138,7 +159,6 @@ Parking_bb <- parking$osm_polygons[unlist(Parking_TF),]
 
 leaflet::leaflet() %>%
   leaflet::addTiles() %>% # OpenStreetMap by default
-  #leaflet::addPolygons(data=parking$osm_polygons,
   leaflet::addPolygons(data=Parking_bb,
                    opacity=0,
                    fillOpacity = 1)
@@ -146,7 +166,7 @@ leaflet::leaflet() %>%
 
 
 
-```{r  load census data}
+```{r  load census data, message=FALSE, warning=FALSE}
 #######################################
 #   Census data
 #######################################
