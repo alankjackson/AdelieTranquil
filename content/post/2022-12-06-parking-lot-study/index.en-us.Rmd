@@ -52,6 +52,9 @@ from the Kinder Institute.
 library(tidyverse)
 library(GeocodeHou)
 library(postmastr)
+library(tmap)
+library(tmaptools)
+library(sf)
 
 google_crs <- "EPSG:4326" # lat long
 CoH_crs <- "EPSG:2278" # X-Y
@@ -62,69 +65,172 @@ knitr::opts_chunk$set(echo = TRUE)
 ##   Read in the necessary datasets
 
 
-###  First let's establish an AOI 
+###  First let's establish an AOI_xy 
 
-The buffer is defined along the streets of interest, and the AOI is 50% larger
+The buffer is defined along the streets of interest, and the AOI_xy is 50% larger
 to ensure we grab the needed data.
 
-```{r AOI, message=FALSE, warning=FALSE}
+```{r AOI_xy, message=FALSE, warning=FALSE}
 ###{r initialize, class.source = 'fold-show'}
 
 #######################################
-#   AOI
+#   AOI_xy
 #######################################
 
 #   Start at 19th and Shepherd, east to Yale, south to 11th, west to Shepherd
-Buffer_coord <- as_tibble(rbind(c(29.802783, -95.410146),
-                      c(29.802935, -95.399204),
-                      c(29.790674, -95.398971),
-                      c(29.790514, -95.409865),
-                      c(29.802783, -95.410146)))
 
-Study_box <- Buffer_coord %>%
-  sf::st_as_sf(coords = c("V2", "V1"), crs = google_crs) %>%
+Buffer_coord <- tribble(~Lat,      ~Lon,
+                        29.802783, -95.410146,
+                        29.802935, -95.399204,
+                        29.790674, -95.398971,
+                        29.790514, -95.409865,
+                        29.802783, -95.410146)
+
+Study_box_ll <- Buffer_coord %>%
+  sf::st_as_sf(coords = c("Lon", "Lat"), crs = google_crs) %>%
   summarise(geometry = sf::st_combine(geometry)) %>%
   sf::st_cast("LINESTRING")
 
-AOI <- Study_box %>% #  enlarge by 15,000 feet
+print("--1--")
+
+AOI_xy <- Study_box_ll %>% #  enlarge by 10,000 feet
   sf::st_transform(crs=CoH_crs) %>% 
   sf::st_line_sample(n=250) %>% 
   sf::st_buffer(dist=10000, endCapStyle="SQUARE")
 
-bbox <- sf::st_bbox(sf::st_transform(lines, crs=CoH_crs))
-#AOI <- bbox
+AOI_ll <- AOI_xy %>% sf::st_transform(crs=google_crs)
 
-#bbox <- expand_bb(bbox, 0.5)
-#AOI <- expand_bb(AOI, 2)
+Parking_select_xy <- Study_box_ll %>% #  enlarge by 10,000 feet
+  sf::st_transform(crs=CoH_crs) %>% 
+  sf::st_line_sample(n=250) %>% 
+  sf::st_buffer(dist=300, endCapStyle="ROUND")
 
+print("--2--")
+bbox_xy <- sf::st_bbox(sf::st_transform(Study_box_ll, crs=CoH_crs))
+bbox_ll <- sf::st_bbox(Study_box_ll)
+bbox_AOI_ll <- sf::st_bbox(AOI_ll)
+print("--3--")
 
 #   Create a ggplot basemap object
 
 Base_basemapR <- basemapR::base_map(sf::st_bbox(
-                                      sf::st_transform(AOI, crs=google_crs)),
+                                      sf::st_transform(AOI_xy, crs=google_crs)),
                                     basemap="mapnik", increase_zoom=2)
+print("--4--")
 ggplot() +
   Base_basemapR +
-  geom_sf(data=sf::st_transform(AOI, crs=google_crs), aes(color="red"), alpha=0.0)+
-  geom_sf(data=Study_box, aes(fill="red"), alpha=0.3)#+
+  geom_sf(data=sf::st_transform(AOI_xy, crs=google_crs), aes(color="red"), alpha=0.0)+
+  geom_sf(data=Study_box_ll, aes(fill="red"), alpha=0.3)+
   # ggtitle("Total Daytime EMS Calls per Keymap Square",
   #         subtitle=Time_period)
+  #   coord_sf needs to follow all the geom_sf statements
+  coord_sf(xlim = c(bbox_AOI_ll[[1]], bbox_AOI_ll[[3]]),
+           ylim = c(bbox_AOI_ll[[2]], bbox_AOI_ll[[4]]),
+           expand = FALSE,
+           default_crs=google_crs)  
 
-leaflet::leaflet() %>%
-  leaflet::addTiles() %>% # OpenStreetMap by default
-  leaflet::addPolylines(data=sf::st_transform(Study_box, crs=google_crs),
-                   opacity=0.5,
-                   fillOpacity = 0.3) %>% 
-  leaflet::addPolygons(data=sf::st_transform(sf::st_as_sfc(bbox), crs=google_crs),
-                   color="red",
-                   weight=2,
-                   opacity=0.5,
-                   fillOpacity = 0.3)   %>% 
-  leaflet::addPolygons(data=sf::st_transform(AOI, crs=google_crs),
-                   color="green",
-                   weight=2,
-                   opacity=0.5,
-                   fillOpacity = 0.3)   
+print("--5--")
+
+#   Set default basemap
+tmap::tmap_options(basemaps="OpenStreetMap")
+
+tmap::tmap_mode("view") # set mode to interactive plots
+
+tmap::tm_shape(sf::st_as_sf(as_tibble(AOI_ll) %>% mutate(Label="AOI"))) +
+  tmap::tm_polygons(alpha=0.3, col="blue")+
+tmap::tm_shape(sf::st_as_sf(as_tibble(sf::st_cast(Study_box_ll, "POLYGON")) %>% mutate(Label="Study area"))) +
+  tmap::tm_polygons(alpha=0.3, col="red")+
+  tmap::tm_scale_bar()+
+  tmap::tmap_options(unit = "mi") +
+  tmap::tm_layout(title="Area of Interest and Study Area")
+
+
+tmap::tmap_mode("plot") # set mode to static plots
+Base_tmap_osm <- tmaptools::read_osm(bbox_AOI_ll, type="osm")
+# 
+tmap::tm_shape(Base_tmap_osm) +
+tmap::tm_graticules(n.x=5)+
+    tmap::tm_rgb() +
+tmap::tm_shape(sf::st_as_sf(as_tibble(AOI_ll) %>% mutate(Label="AOI"))) +
+  tmap::tm_polygons(alpha=0.3, col="blue")+
+tmap::tm_shape(sf::st_as_sf(as_tibble(sf::st_cast(Study_box_ll, "POLYGON")) %>% mutate(Label="Study area"))) +
+  tmap::tm_polygons(alpha=0.3, col="red")+
+  tmap::tm_scale_bar(
+    size = 0.5,
+    color.dark = "black",
+    color.light = "white",
+    lwd = 1
+  )+
+  tmap::tmap_options(unit = "mi") +
+  tmap::tm_layout(title="Area of Interest and Study Area")
+
+# leaflet::leaflet() %>%
+#   leaflet::addTiles() %>% # OpenStreetMap by default
+#   leaflet::addPolylines(data=sf::st_transform(Study_box_ll, crs=google_crs),
+#                    opacity=0.5,
+#                    fillOpacity = 0.3) %>%
+#   leaflet::addPolygons(data=sf::st_transform(sf::st_as_sfc(bbox_xy), crs=google_crs),
+#                    color="red",
+#                    weight=2,
+#                    opacity=0.5,
+#                    fillOpacity = 0.3)   %>%
+#   leaflet::addPolygons(data=sf::st_transform(AOI_xy, crs=google_crs),
+#                    color="green",
+#                    weight=2,
+#                    opacity=0.5,
+#                    fillOpacity = 0.3)
+
+```
+
+##        I need a freeway polygon
+
+It is painful for pedestrians and bicyclists to cross under the freeway. The
+roads pretty effectively segregate the neighborhood. I will honor that by
+clipping my distance polygons with the freeways that basically define the
+boundaries of the Heights.
+
+```{r make freeway poly, cache=TRUE}
+
+#   Get freeway data
+
+Freeways <- 
+  osmdata::getbb(place_name = "Houston") %>% 
+  osmdata::opq(timeout=50)%>% # Build query
+  osmdata::add_osm_feature(key = "highway", 
+                  value = c("motorway", 
+                            "motorway_link" 
+                            )) %>% # select the big roads
+  osmdata::osmdata_sf(quiet=FALSE) 
+
+#   These are the freeways that will define a polygon
+Fwy_names <- paste0(c("North Loop", "Katy Freeway", "West Loop North", 
+               "North Freeway", "North Loop West"), collapse="|")
+
+Selected_fwys <- Freeways$osm_lines %>% 
+  filter(stringr::str_detect(name, Fwy_names)) %>% 
+  select(osm_id, name)
+
+#   Create polygons and (interactively) figure out which one is wanted
+
+Fwy_poly <- Selected_fwys %>% 
+  st_union() %>% 
+  st_polygonize() %>% 
+  st_cast() %>% 
+  as_tibble() %>% 
+  mutate(id=row_number()) %>% 
+  st_as_sf() %>% 
+  filter(id==5)
+
+#     Let's take a look
+
+ leaflet::leaflet() %>%
+   leaflet::addTiles() %>% # OpenStreetMap by default
+   leaflet::addPolylines(data=Fwy_poly,
+                    popup = as.character(Fwy_poly$id),
+                    opacity=0.5,
+                    fillOpacity = 0.3)
+ 
+ 
 ```
 
 ###     Load parking lots
@@ -145,21 +251,19 @@ parking <-
                             ) %>% 
   osmdata::osmdata_sf(quiet=FALSE) # turn into an sf file
 
-#   Extract parking lots in the AOI
+#   Extract parking lots in the AOI that are near the study box 
 
-Parking_TF <- sf::st_contains( sf::st_transform(
-                                    sf::st_as_sfc(bbox, crs=google_crs),
-                                    crs=CoH_crs),
+Parking_TF <- sf::st_contains( Parking_select_xy, 
                                sf::st_transform(
                                     sf::st_as_sfc(parking$osm_polygons,
                                               crs=google_crs),
                                     crs=CoH_crs))
 
-Parking_bb <- parking$osm_polygons[unlist(Parking_TF),]
+Parking_ll <- parking$osm_polygons[unlist(Parking_TF),]
 
 leaflet::leaflet() %>%
   leaflet::addTiles() %>% # OpenStreetMap by default
-  leaflet::addPolygons(data=Parking_bb,
+  leaflet::addPolygons(data=Parking_ll,
                    opacity=0,
                    fillOpacity = 1)
 ```
