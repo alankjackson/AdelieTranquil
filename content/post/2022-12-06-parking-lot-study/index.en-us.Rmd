@@ -47,11 +47,11 @@ A good overview of many of the issues may be found in [this
 paper](https://kinder.rice.edu/urbanedge/less-space-parking-crucial-step-toward-walkability-houston)
 from the Kinder Institute.
 
-```{r setup, include=FALSE, echo=FALSE}
+```{r setup, include=FALSE, echo=TRUE}
 
 library(tidyverse)
-library(GeocodeHou)
-library(postmastr)
+library(GeocodeHou) # personal package for geocoding
+library(postmastr) # nice address parsing package
 library(tmap)
 library(tmaptools)
 library(sf)
@@ -67,8 +67,8 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ###  First let's establish an AOI_xy 
 
-The buffer is defined along the streets of interest, and the AOI_xy is 50% larger
-to ensure we grab the needed data.
+The buffer is defined along the streets of interest, and the AOI_xy is 10,000
+feet larger to ensure we grab the needed data.
 
 ```{r AOI_xy, message=FALSE, warning=FALSE}
 ###{r initialize, class.source = 'fold-show'}
@@ -91,8 +91,6 @@ Study_box_ll <- Buffer_coord %>%
   summarise(geometry = sf::st_combine(geometry)) %>%
   sf::st_cast("LINESTRING")
 
-print("--1--")
-
 AOI_xy <- Study_box_ll %>% #  enlarge by 10,000 feet
   sf::st_transform(crs=CoH_crs) %>% 
   sf::st_line_sample(n=250) %>% 
@@ -100,36 +98,16 @@ AOI_xy <- Study_box_ll %>% #  enlarge by 10,000 feet
 
 AOI_ll <- AOI_xy %>% sf::st_transform(crs=google_crs)
 
-Parking_select_xy <- Study_box_ll %>% #  enlarge by 10,000 feet
+#   Buffer used to extract parking lots for the study
+
+Parking_select_xy <- Study_box_ll %>% #  enlarge by 1000 feet
   sf::st_transform(crs=CoH_crs) %>% 
   sf::st_line_sample(n=250) %>% 
-  sf::st_buffer(dist=300, endCapStyle="ROUND")
+  sf::st_buffer(dist=1000, endCapStyle="ROUND")
 
-print("--2--")
 bbox_xy <- sf::st_bbox(sf::st_transform(Study_box_ll, crs=CoH_crs))
 bbox_ll <- sf::st_bbox(Study_box_ll)
 bbox_AOI_ll <- sf::st_bbox(AOI_ll)
-print("--3--")
-
-#   Create a ggplot basemap object
-
-Base_basemapR <- basemapR::base_map(sf::st_bbox(
-                                      sf::st_transform(AOI_xy, crs=google_crs)),
-                                    basemap="mapnik", increase_zoom=2)
-print("--4--")
-ggplot() +
-  Base_basemapR +
-  geom_sf(data=sf::st_transform(AOI_xy, crs=google_crs), aes(color="red"), alpha=0.0)+
-  geom_sf(data=Study_box_ll, aes(fill="red"), alpha=0.3)+
-  # ggtitle("Total Daytime EMS Calls per Keymap Square",
-  #         subtitle=Time_period)
-  #   coord_sf needs to follow all the geom_sf statements
-  coord_sf(xlim = c(bbox_AOI_ll[[1]], bbox_AOI_ll[[3]]),
-           ylim = c(bbox_AOI_ll[[2]], bbox_AOI_ll[[4]]),
-           expand = FALSE,
-           default_crs=google_crs)  
-
-print("--5--")
 
 #   Set default basemap
 tmap::tmap_options(basemaps="OpenStreetMap")
@@ -144,42 +122,6 @@ tmap::tm_shape(sf::st_as_sf(as_tibble(sf::st_cast(Study_box_ll, "POLYGON")) %>% 
   tmap::tmap_options(unit = "mi") +
   tmap::tm_layout(title="Area of Interest and Study Area")
 
-
-tmap::tmap_mode("plot") # set mode to static plots
-Base_tmap_osm <- tmaptools::read_osm(bbox_AOI_ll, type="osm")
-# 
-tmap::tm_shape(Base_tmap_osm) +
-tmap::tm_graticules(n.x=5)+
-    tmap::tm_rgb() +
-tmap::tm_shape(sf::st_as_sf(as_tibble(AOI_ll) %>% mutate(Label="AOI"))) +
-  tmap::tm_polygons(alpha=0.3, col="blue")+
-tmap::tm_shape(sf::st_as_sf(as_tibble(sf::st_cast(Study_box_ll, "POLYGON")) %>% mutate(Label="Study area"))) +
-  tmap::tm_polygons(alpha=0.3, col="red")+
-  tmap::tm_scale_bar(
-    size = 0.5,
-    color.dark = "black",
-    color.light = "white",
-    lwd = 1
-  )+
-  tmap::tmap_options(unit = "mi") +
-  tmap::tm_layout(title="Area of Interest and Study Area")
-
-# leaflet::leaflet() %>%
-#   leaflet::addTiles() %>% # OpenStreetMap by default
-#   leaflet::addPolylines(data=sf::st_transform(Study_box_ll, crs=google_crs),
-#                    opacity=0.5,
-#                    fillOpacity = 0.3) %>%
-#   leaflet::addPolygons(data=sf::st_transform(sf::st_as_sfc(bbox_xy), crs=google_crs),
-#                    color="red",
-#                    weight=2,
-#                    opacity=0.5,
-#                    fillOpacity = 0.3)   %>%
-#   leaflet::addPolygons(data=sf::st_transform(AOI_xy, crs=google_crs),
-#                    color="green",
-#                    weight=2,
-#                    opacity=0.5,
-#                    fillOpacity = 0.3)
-
 ```
 
 ##        I need a freeway polygon
@@ -189,7 +131,7 @@ roads pretty effectively segregate the neighborhood. I will honor that by
 clipping my distance polygons with the freeways that basically define the
 boundaries of the Heights.
 
-```{r make freeway poly, cache=TRUE}
+```{r make freeway poly, cache=FALSE}
 
 #   Get freeway data
 
@@ -223,14 +165,15 @@ Fwy_poly <- Selected_fwys %>%
 
 #     Let's take a look
 
- leaflet::leaflet() %>%
-   leaflet::addTiles() %>% # OpenStreetMap by default
-   leaflet::addPolylines(data=Fwy_poly,
-                    popup = as.character(Fwy_poly$id),
-                    opacity=0.5,
-                    fillOpacity = 0.3)
- 
- 
+tmap::tmap_options(basemaps="OpenStreetMap")
+tmap::tmap_mode("view") # set mode to interactive plots
+
+tmap::tm_shape(sf::st_as_sf(as_tibble(Fwy_poly) %>% mutate(Label="Freeways"))) +
+  tmap::tm_polygons(alpha=0.3, col="blue")+
+  tmap::tm_scale_bar()+
+  tmap::tmap_options(unit = "mi") +
+  tmap::tm_layout(title="Freeway-defined Study Area Cutoff")
+
 ```
 
 ###     Load parking lots
@@ -238,7 +181,7 @@ Fwy_poly <- Selected_fwys %>%
 From OpenStreetMap we will load the digitized parking lots that I digitized
 for the study.
 
-```{r load parking lots, message=FALSE, warning=FALSE}
+```{r load parking lots, message=FALSE, warning=FALSE, cache=FALSE}
 #######################################
 #   Parking lots
 #######################################
@@ -259,13 +202,19 @@ Parking_TF <- sf::st_contains( Parking_select_xy,
                                               crs=google_crs),
                                     crs=CoH_crs))
 
-Parking_ll <- parking$osm_polygons[unlist(Parking_TF),]
+Parking_ll <- parking$osm_polygons[unlist(Parking_TF),] %>% 
+  select(osm_id, amenity, surface)
 
-leaflet::leaflet() %>%
-  leaflet::addTiles() %>% # OpenStreetMap by default
-  leaflet::addPolygons(data=Parking_ll,
-                   opacity=0,
-                   fillOpacity = 1)
+
+tmap::tmap_options(basemaps="OpenStreetMap")
+tmap::tmap_mode("view") # set mode to interactive plots
+
+tmap::tm_shape(Parking_ll) +
+  tmap::tm_polygons(alpha=0.8, col="blue")+
+  tmap::tm_scale_bar()+
+  tmap::tmap_options(unit = "mi") +
+  tmap::tm_layout(title="Parking lots")
+
 ```
 
 
