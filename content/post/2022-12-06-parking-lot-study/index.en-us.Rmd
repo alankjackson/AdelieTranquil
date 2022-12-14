@@ -135,14 +135,21 @@ boundaries of the Heights.
 
 #   Get freeway data
 
-Freeways <- 
-  osmdata::getbb(place_name = "Houston") %>% 
-  osmdata::opq(timeout=50)%>% # Build query
-  osmdata::add_osm_feature(key = "highway", 
-                  value = c("motorway", 
-                            "motorway_link" 
-                            )) %>% # select the big roads
-  osmdata::osmdata_sf(quiet=FALSE) 
+if (!file.exists("OSM_Freeways.rds")) { # save results
+  Freeways <- 
+    osmdata::getbb(place_name = "Houston") %>% 
+    osmdata::opq(timeout=50)%>% # Build query
+    osmdata::add_osm_feature(key = "highway", 
+                    value = c("motorway", 
+                              "motorway_link" 
+                              )) %>% # select the big roads
+    osmdata::osmdata_sf(quiet=FALSE) 
+  
+  saveRDS(Freeways, "OSM_Freeways.rds")
+} else {
+  Freeways <- readRDS("OSM_Freeways.rds")
+}
+
 
 #   These are the freeways that will define a polygon
 Fwy_names <- paste0(c("North Loop", "Katy Freeway", "West Loop North", 
@@ -171,10 +178,18 @@ tmap::tmap_mode("view") # set mode to interactive plots
 tmap::tm_shape(sf::st_as_sf(as_tibble(Fwy_poly) %>% mutate(Label="Freeways"))) +
   tmap::tm_polygons(alpha=0.3, col="blue")+
   tmap::tm_scale_bar()+
-  tmap::tmap_options(unit = "mi") +
-  tmap::tm_layout(title="Freeway-defined Study Area Cutoff")
+  tmap::tmap_options(unit = "mi")# +
+  # tmap::tm_layout(title="Freeway-defined Study Area Cutoff")
 
 ```
+
+##        Collect the data
+
+First we will collect the various data we will need in the analysis. 
+
+- Parking lots
+- Census data
+- Tax data
 
 ###     Load parking lots
 
@@ -186,13 +201,19 @@ for the study.
 #   Parking lots
 #######################################
 
-parking <- 
-  osmdata::getbb(place_name = "Houston") %>% 
-  osmdata::opq(timeout = 50) %>% # Build query
-  osmdata::add_osm_feature(key = "amenity", 
-                           value = "parking" 
-                            ) %>% 
-  osmdata::osmdata_sf(quiet=FALSE) # turn into an sf file
+if (!file.exists("OSM_parking.rds")) { # save results
+  parking <- 
+    osmdata::getbb(place_name = "Houston") %>% 
+    osmdata::opq(timeout = 50) %>% # Build query
+    osmdata::add_osm_feature(key = "amenity", 
+                             value = "parking" 
+                              ) %>% 
+    osmdata::osmdata_sf(quiet=FALSE) # turn into an sf file
+  
+  saveRDS(parking, "OSM_parking.rds")
+} else {
+  parking <- readRDS("OSM_parking.rds")
+}
 
 #   Extract parking lots in the AOI that are near the study box 
 
@@ -212,11 +233,18 @@ tmap::tmap_mode("view") # set mode to interactive plots
 tmap::tm_shape(Parking_ll) +
   tmap::tm_polygons(alpha=0.8, col="blue")+
   tmap::tm_scale_bar()+
-  tmap::tmap_options(unit = "mi") +
-  tmap::tm_layout(title="Parking lots")
+  tmap::tmap_options(unit = "mi")# +
+  # tmap::tm_layout(title="Parking lots")
 
 ```
 
+###       Load census data
+
+I have previously downloaded and tidied census data for this area, so I will
+utilize that.
+
+I'll load the population by block data, and the income by block-group data.
+I'll also calculate some useful stuff like population density.
 
 
 ```{r  load census data, message=FALSE, warning=FALSE}
@@ -226,11 +254,125 @@ tmap::tm_shape(Parking_ll) +
 
 path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/Census_data/"
 
+Pop <- readRDS(paste0(path, "Pop_data_by_block_2020.rds"))
+ACS <- readRDS(paste0(path, "Income_and_Age_by_BlkGrp_2015_2020.rds"))
+
+#   Extract census blocks in the AOI that are near the study box 
+
+Pop_TF <- sf::st_contains(AOI_xy, 
+                          sf::st_transform(Pop, crs=CoH_crs)) 
+
+Pop_ll <- Pop[unlist(Pop_TF),]  %>% 
+  sf::st_cast("POLYGON") %>% 
+  sf::st_as_sf()
+
+tmap::tmap_options(basemaps="OpenStreetMap")
+tmap::tmap_mode("view") # set mode to interactive plots
+
+tmap::tm_shape(Pop_ll) +
+  tmap::tm_polygons(alpha=0.8, col="Pop", 
+                    breaks = c(100, 200, 300, 400, 500, 1000))+
+  tmap::tm_scale_bar()+
+  tmap::tmap_options(unit = "mi")# +
+  # tmap::tm_layout(title="Population")
+
+#   Calculate Population density
+
+Pop_ll <- 
+  Pop_ll %>%
+  mutate(area=sf::st_area(geometry)) %>% 
+  mutate(area=units::drop_units(area)) %>% 
+  mutate(Pop_density=(Pop/area)*2.59e+6) %>% 
+  mutate(Pop_density=ifelse(Pop<10, NA, Pop_density))
+
+tmap::tm_shape(Pop_ll %>% 
+                 mutate(Pop_density=if_else(is.na(Pop_density),0,Pop_density))) +
+  tmap::tm_polygons(alpha=0.8, col="Pop_density", 
+                    breaks = c(0, 5000, 10000, 20000, 40000))+
+  tmap::tm_scale_bar()+
+  tmap::tmap_options(unit = "mi")# +
+  # tmap::tm_layout(title="Population Density (per/sq-mi)")
+
+#   Income
+
+#   Extract census block groups in the AOI that are near the study box 
+
+ACS_TF <- sf::st_contains(AOI_xy, 
+                          sf::st_transform(ACS, crs=CoH_crs)) 
+
+ACS_ll <- ACS[unlist(ACS_TF),]  %>% 
+  sf::st_cast("POLYGON") %>% 
+  sf::st_as_sf()
+
+tmap::tm_shape(ACS_ll) +    
+  tmap::tm_polygons(alpha=0.8, col="Per_cap_incE", 
+                    breaks = c(0, 50000, 100000, 200000, 400000))+
+  tmap::tm_scale_bar()+
+  tmap::tmap_options(unit = "mi") #+
+  # tmap::tm_layout(title="Average Income")
+
+```
+
+
+```{r load Tax data}
 
 #######################################
 #   HCAD data
 #######################################
 
+Hcad_path <- "/home/ajackson/Dropbox/Rprojects/Curated_Data_Files/"
+df <- readRDS(paste0(Hcad_path, "HCAD/Values_2022.rds"))
+
+#   First pare down file by zipcode
+
+df <- df %>% 
+  filter(stringr::str_detect(site_addr_3,
+                             paste(c("77008", "77007", "77009"), collapse="|")))
+
+#   Pull out just the commercial properties
+
+df <- df %>% 
+  filter(state_class=="F1")
+
+#   Calculate some stuff
+
+df <- df %>% 
+  mutate(bld_ar=as.numeric(bld_ar)) %>% 
+  mutate(land_ar=as.numeric(land_ar)) %>% 
+  mutate(bld_val=as.numeric(bld_val)) %>% 
+  mutate(land_val=as.numeric(land_val)) %>% 
+  mutate(ratio_area=bld_val/land_val) %>% 
+  mutate(ratio_value=bld_val/land_val) %>% 
+  mutate(bld_persqft=bld_val/bld_ar) %>% 
+  mutate(land_persqft=land_val/land_ar) %>% 
+  filter(bld_ar>500) %>% 
+  filter(land_ar>1000) %>% 
+  filter(land_val>0)
+  
+
+#   How big are the commercial buildings?
+
+df %>% 
+  ggplot(aes(x=bld_ar, fill=site_addr_3)) +
+  geom_histogram() +
+  labs(title="Building Areas in Zips 77007, 77008, and 77009",
+       x="Area (sq ft)")
+
+#   Value per sq foor for buildings
+
+df %>% 
+  ggplot(aes(x=bld_persqft, fill=site_addr_3)) +
+  geom_histogram() +
+  labs(title="Building Value per Square Foot in Zips 77007, 77008, and 77009",
+       x="Dollars per sq-ft")
+
+#   Value per sq foor for land
+
+df %>% 
+  ggplot(aes(x=land_persqft, fill=site_addr_3)) +
+  geom_histogram(bins=20) +
+  labs(title="Land Value per Square Foot in Zips 77007, 77008, and 77009",
+       x="Dollars per sq-ft")
 
 ```
 
