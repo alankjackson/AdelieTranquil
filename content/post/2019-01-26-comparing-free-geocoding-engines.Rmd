@@ -2,38 +2,24 @@
 title: Comparing Free geocoding engines
 author: Alan Jackson
 date: '2019-01-26'
-slug: comparing-free-geocoding-engines
+format: html
+description: Comparing geocoding engines available from Google and the Census
+image: cover.png
 categories:
   - Geocoding
-tags:
   - Mapping
+editor: source
 ---
 
+## Introduction
 
+I have been struggling with geocoding for about a year now, and have begun to learn far more than I wanted about the ugly details of the tools available for free. In particular I have been using Google and the US Census Bureau for geocoding. They each have their own strengths and weaknesses, so I thought it would be appropriate to share what I have learned.
 
+I would call Google promiscuous - they will try very hard to return a location to you, even if it is all wrong. So using Google, in my experience, requires a fair bit of post-processing. Of course, you are also limited to 2500 queries per 24 hours with Google, which can be a bummer.
 
-##  Introduction  
-
-I have been struggling with geocoding for about a year now, and have 
-begun to learn far more than I wanted about the ugly details of the
-tools available for free. In particular I have been using Google and
-the US Census Bureau for geocoding. They each have their own strengths
-and weaknesses, so I thought it would be appropriate to share what I
-have learned.
-
-I would call Google promiscuous - they will try very hard to return
-a location to you, even if it is all wrong. So using Google, in my
-experience, requires a fair bit of post-processing. Of course, you are
-also limited to 2500 queries per 24 hours with Google, which can be
-a bummer.
-
-The Census geocoder, on the other hand, is pretty restrictive. If the
-address isn't pretty close, it will return nothing. This can be
-frustrating and require quite a bit of pre-processing, but it is nice
-that you can generally, with some caveats, trust the result. 
+The Census geocoder, on the other hand, is pretty restrictive. If the address isn't pretty close, it will return nothing. This can be frustrating and require quite a bit of pre-processing, but it is nice that you can generally, with some caveats, trust the result.
 
 So lets go through the two engines in more detail, with real examples.
-
 
 ```{r setup, message=FALSE, warning=FALSE, results='hide'}
 library(gt)
@@ -57,17 +43,13 @@ knitr::opts_chunk$set(echo = TRUE,
                       message=FALSE) 
 ```
 
+## Google Geocoding
 
-##  Google Geocoding
-
-Google requires you get an API key from them in order to do geocoding.
-This has been well-documented [elsewhere](https://www.visibledata.co.uk/blog/2018/12/05/2018-12-05-using-ggmap-after-july-2018/), so I will not do that here.
+Google requires you get an API key from them in order to do geocoding. This has been well-documented [elsewhere](https://www.visibledata.co.uk/blog/2018/12/05/2018-12-05-using-ggmap-after-july-2018/), so I will not do that here.
 
 ### What Locations do Google and the Census actually return?
 
-Let's generate a detailed map and see where the locations Google
-and the census gives us actually are. You might be surprised,
-even disturbed.
+Let's generate a detailed map and see where the locations Google and the census gives us actually are. You might be surprised, even disturbed.
 
 ```{r locations, warning=FALSE}
 
@@ -94,10 +76,9 @@ zoom <- 19
 
 ```
 
-###  Here is my function for querying the census data
+### Here is my function for querying the census data
 
 There is a good bit of error checking, retries, and tests
-
 
 ```{r Census_Query, warning=FALSE}
 GetResult <- function(urlreq) {# query census server and retry
@@ -163,7 +144,7 @@ Census_decoder <- function(address, city=NA, state=NA, zip=NA){
         str_split(temp[["matchedAddress"]], ",")[1])) { break }
   }
     tract <- temp[["geographies"]][[
-                   "2010 Census Blocks"]][[1]][["TRACT"]]
+                   "2020 Census Blocks"]][[1]][["TRACT"]]
     if (is.null(tract)){
       return(tibble(
         status="fail_tract no tract",
@@ -179,9 +160,9 @@ Census_decoder <- function(address, city=NA, state=NA, zip=NA){
     lat=temp[["coordinates"]][["y"]]
     lon=temp[["coordinates"]][["x"]]
     tract=temp[["geographies"]] [[
-                "2010 Census Blocks"]][[1]][["TRACT"]]
+                "2020 Census Blocks"]][[1]][["TRACT"]]
     block=temp[["geographies"]] [[
-                "2010 Census Blocks"]][[1]][["BLOCK"]]
+                "2020 Census Blocks"]][[1]][["BLOCK"]]
     
     return(tibble(
       status=status,
@@ -221,8 +202,7 @@ getfields <- function(x){
 
 ### Let's put points on a map for comparison
 
-For a few addresses, calculate lat/lon from both Google and
-Census
+For a few addresses, calculate lat/lon from both Google and Census
 
 ```{r Put_points_on_map, warning=FALSE, cache=TRUE}
 
@@ -237,7 +217,7 @@ tibble( status=character(),
         block=character())
 addys <- #  Break up addresses into components
   tibble(Addresses) %>% 
-  separate(Addresses,",", into=c("street",
+  separate(Addresses,", ", into=c("street",
                                  "city",
                                  "state",
                                  "zip"))   
@@ -281,7 +261,7 @@ ggmap(gmap, extent='normal', maprange=FALSE, show.legend=FALSE) %+%
   
 ```
 
-###  How big is the difference?
+### How big is the difference?
 
 Let's make a table of these differences
 
@@ -324,39 +304,17 @@ loctable %>%
 
 So differences of 50 - 250 feet!
 
-Part of this is that the Census tries to locate the address
-at the curb in front of the address (although the cluster of
-addresses for homes, 403,407, 413, and 415 seems to indicate
-they are not too good at this), while Google gives a point
-roughly in the center of the building at that address. I purposely
-chose an apartment complex to illustrate how bad this can get.
+Part of this is that the Census tries to locate the address at the curb in front of the address (although the cluster of addresses for homes, 403,407, 413, and 415 seems to indicate they are not too good at this), while Google gives a point roughly in the center of the building at that address. I purposely chose an apartment complex to illustrate how bad this can get.
 
-Note the Google Status column. According to Google, ROOFTOP implies
-"a precise geocode for which we have location information accurate down to street address precision".
-RANGE_INTERPOLATED " indicates that the returned result reflects an approximation (usually on a road) interpolated between two precise points". However, I do not find these especially helpful. 320 is a ROOFTOP
-location, but because it is a large building, that location is well
-off the street, so depending on the usage, that could be an issue.
+Note the Google Status column. According to Google, ROOFTOP implies "a precise geocode for which we have location information accurate down to street address precision". RANGE_INTERPOLATED " indicates that the returned result reflects an approximation (usually on a road) interpolated between two precise points". However, I do not find these especially helpful. 320 is a ROOFTOP location, but because it is a large building, that location is well off the street, so depending on the usage, that could be an issue.
 
-Since the Census locations are based on the Tiger files, they do 
-follow the streets quite well. However, their actual accuracy
-seems to be quite low.
+Since the Census locations are based on the Tiger files, they do follow the streets quite well. However, their actual accuracy seems to be quite low.
 
 ### Other Census Issues
 
-In their documentation, the Census Bureau notes that their data
-is incomplete - if an address is not in a residential area, they
-are not interested in it. Queries for much of downtown Houston
-failed - I assume for this very reason. No one lives there. I am
-looking at police data, and apparently a lot of crime occurs
-under freeways. The Census fails to geolocate those addresses.
+In their documentation, the Census Bureau notes that their data is incomplete - if an address is not in a residential area, they are not interested in it. Queries for much of downtown Houston failed - I assume for this very reason. No one lives there. I am looking at police data, and apparently a lot of crime occurs under freeways. The Census fails to geolocate those addresses.
 
-Another flaw, in my opinion, is how they handle directional
-prefixes - they are given a very low weighting in their matching
-algorithm, so when I asked for 1200 N Shepherd, it would return
-1200 S Shepherd. An error of several miles. The only way to force 
-it onto the correct part of the street is to supply a zipcode, 
-which I did not have, so  I had to expend some effort estimating
-zipcodes to get it to work.
+Another flaw, in my opinion, is how they handle directional prefixes - they are given a very low weighting in their matching algorithm, so when I asked for 1200 N Shepherd, it would return 1200 S Shepherd. An error of several miles. The only way to force it onto the correct part of the street is to supply a zipcode, which I did not have, so I had to expend some effort estimating zipcodes to get it to work.
 
 So why bother with the Census server, why not use Google?
 
@@ -379,7 +337,7 @@ tibble( status=character(),
         block=character())
 addys <- 
   tibble(Addresses) %>% 
-  separate(Addresses,",", into=c("street",
+  separate(Addresses,", ", into=c("street",
                                  "city",
                                  "state",
                                  "zip"))   
@@ -428,58 +386,41 @@ ggmap(gmap, extent='normal', maprange=FALSE, show.legend=FALSE) %+%
        caption=caption) 
 ```
 
-So from the map we can see several things. For example, Google's
-tag for 1520 Tulane is spot on (ground truth from streetview). 
-The census data is all shifted
-rather badly - the north-south blocks in this area have addresses
-that only go from 0 to 50, that is 1500-1550 on this block, not
-1599, which apparently the census data assumes.
+So from the map we can see several things. For example, Google's tag for 1520 Tulane is spot on (ground truth from streetview). The census data is all shifted rather badly - the north-south blocks in this area have addresses that only go from 0 to 50, that is 1500-1550 on this block, not 1599, which apparently the census data assumes.
 
-So what gives with the Google points at 1570, 1600, and 1700?
-Those addresses do not exist. The street does not exist for the
-1600 and 1700 blocks. But Google returns an answer anyway, that is
-simply wrong. For 1600 and 1700, the Census query fails. So I would
-claim that is a good thing. Moreover, Google does not really give you
-much of a clue about what it has done. The addresses are returned as
-RANGE_INTERPOLATED, but that can happen with legitimate addresses.
+So what gives with the Google points at 1570, 1600, and 1700? Those addresses do not exist. The street does not exist for the 1600 and 1700 blocks. But Google returns an answer anyway, that is simply wrong. For 1600 and 1700, the Census query fails. So I would claim that is a good thing. Moreover, Google does not really give you much of a clue about what it has done. The addresses are returned as RANGE_INTERPOLATED, but that can happen with legitimate addresses.
 
-So we have several problems. Google is happy to return adresses that 
-do not exist - where the street does not even exist. The census returns
-addresses only where the street exists, but assumes addresses go from zero to 99, and so is stymied when they do not.
+So we have several problems. Google is happy to return adresses that do not exist - where the street does not even exist. The census returns addresses only where the street exists, but assumes addresses go from zero to 99, and so is stymied when they do not.
 
 So let's summarize:
 
-**Google Pro's**  
+**Google Pro's**
 
-* able to handle dirty data (misspelled streets)
-* fairly comprehensive, even for new neighborhoods
-* points flagged as "rooftop" are real and exact
+-   able to handle dirty data (misspelled streets)
+-   fairly comprehensive, even for new neighborhoods
+-   points flagged as "rooftop" are real and exact
 
-**Google Con's**  
+**Google Con's**
 
-* will happily return nonsense as if it is real
-* 2500 query per day limit
-* location at building center (for some this could be a Pro)
+-   will happily return nonsense as if it is real
+-   2500 query per day limit
+-   location at building center (for some this could be a Pro)
 
-**Census Pro's**  
+**Census Pro's**
 
-* unlimited daily queries
-* will return an error for addresses that do not exist (mostly)
-* locations are along curb (for some this could be a Con)
+-   unlimited daily queries
+-   will return an error for addresses that do not exist (mostly)
+-   locations are along curb (for some this could be a Con)
 
-**Census Con's**  
- 
-* input address must be pretty close to correct
-* handles directional prefixes poorly
-* assumes blocks run from 0-99
-* only covers residential addresses (mostly) and not as current
+**Census Con's**
 
-What have I decided to use for my purposes? I have about 100,000
-addresses to geocode, so I am trying to do as many as possible with the Census geocoder, and then falling back to the Google geocoder for the remainder. However, I have to do a lot of error checking for both with the output data - for example with Google if I look for 1600 and 1625,
-does the point move? If not I have a problem.
+-   input address must be pretty close to correct
+-   handles directional prefixes poorly
+-   assumes blocks run from 0-99
+-   only covers residential addresses (mostly) and not as current
+
+What have I decided to use for my purposes? I have about 100,000 addresses to geocode, so I am trying to do as many as possible with the Census geocoder, and then falling back to the Google geocoder for the remainder. However, I have to do a lot of error checking for both with the output data - for example with Google if I look for 1600 and 1625, does the point move? If not I have a problem.
 
 ### Other geocoding issues
 
-I have had sporadic server issues with both products. I have had Google fail in such a way that I lost 2000 queries. Because of that I now only call it one query at a time. For a while Google was failing with an erroneous "maximum query reached" message on about 20% of my queries. That was frustrating. And for the Census queries I have set up an automatic retry, because I was seeing enough server failures that it
-seemed necessary.
-
+I have had sporadic server issues with both products. I have had Google fail in such a way that I lost 2000 queries. Because of that I now only call it one query at a time. For a while Google was failing with an erroneous "maximum query reached" message on about 20% of my queries. That was frustrating. And for the Census queries I have set up an automatic retry, because I was seeing enough server failures that it seemed necessary.
