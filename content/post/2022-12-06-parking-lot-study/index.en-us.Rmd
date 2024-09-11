@@ -313,6 +313,17 @@ tmap::tm_shape(ACS_ll) +
 
 ```
 
+###   Load the tax data
+
+I have previously downloaded and tidied the tax assessor data for this area, so
+I will use that.
+
+I'll pull out only the zipcodes in the analysis area, restrict to commercial
+properties only, calculate various per foot values, and throw out wierd values
+that will just cause trouble.
+
+I find it really interesting that the histogram of land value per square foot
+clusters around $25, $50, and $75 per square foot.
 
 ```{r load Tax data}
 
@@ -376,7 +387,190 @@ df %>%
 
 ```
 
+###      Geocode
 
+Sadly the tax assessor data does not come geocoded, so I will have to do that.
+
+First I will parse the address data using the nice 
+[package](https://github.com/slu-openGIS/postmastr) from Christopher Prener.
+
+Then I will use my own [package](https://github.com/alankjackson/GeocodeHou) 
+for geocoding Houston addresses.
+
+```{r geocode HCAD data}
+
+if (!file.exists("HCAD_geocode.rds")) { # save results
+  foo <- df %>% mutate(site_addr_1=stringr::str_remove(site_addr_1, " \\d+$")) 
+  foo <- pm_identify(foo, var="site_addr_1") # add ID fields
+  foo2 <- pm_prep(foo, var="site_addr_1", type="street") # Prep data
+  foo2 <- pm_houseFrac_parse(foo2)
+  foo2 <- pm_house_parse(foo2)
+  foo2 <- pm_streetDir_parse(foo2)
+  foo2 <- pm_streetSuf_parse(foo2)
+  foo2 <- pm_street_parse(foo2)
+  foo2 <- foo2 %>% 
+    mutate(pm.street=str_to_upper(pm.street)) %>% 
+    mutate(pm.street=str_replace(pm.street, " AT ", "/")) %>% 
+    mutate(pm.streetSuf=str_to_upper(pm.streetSuf)) %>% 
+    mutate(pm.preDir=replace_na(pm.preDir, "")) %>% 
+    mutate(pm.sufDir=replace_na(pm.sufDir, "")) %>% 
+    mutate(pm.streetSuf=replace_na(pm.streetSuf, ""))
+  foo <- pm_replace(foo2, source=foo)
+  
+  #   Geocode
+  
+  match <- NULL
+  unmatch <- NULL
+  for (i in 1:nrow(foo)){ # exact match
+    if (is.na(foo[i,]$pm.street)) {next}
+    print(paste("i=",i))
+    tmp <- GeocodeHou::match_exactly(foo[i,]$pm.house, 
+                          foo[i,]$pm.preDir,
+                          foo[i,]$pm.street,
+                          foo[i,]$pm.streetSuf, 
+                          foo[i,]$site_addr_3)
+    if (tmp$Success){ #   success
+      print(paste("Success", tmp$Lat, tmp$Lon))
+      match <- cbind(foo[i,], Lat=tmp$Lat, Lon=tmp$Lon) %>% 
+        rbind(., match)
+    } else { #  Fail exact match
+      print(paste("Failed", tmp$Fail))
+      unmatch <- cbind(foo[i,], Fail=tmp$Fail) %>% 
+        rbind(., unmatch)
+    }
+  }
+  
+  #   Bad street type
+  
+  match_type <- NULL
+  unmatch_type <- NULL
+  foo2 <- unmatch %>% filter(Fail=="Street_type")
+  for (i in 1:nrow(foo2)){ # name repair
+    print(paste("i=",i))
+    tmp <- GeocodeHou::repair_type(foo2[i,]$pm.house, 
+                          foo2[i,]$pm.preDir,
+                          foo2[i,]$pm.street,
+                          foo2[i,]$pm.streetSuf, 
+                          foo2[i,]$site_addr_3)
+    if (tmp$Success){ #   success
+      print(paste("Success", tmp$Lat, tmp$Lon))
+      match_type <- cbind(foo2[i,], Lat=tmp$Lat, Lon=tmp$Lon) %>% 
+        rbind(., match_type)
+    } else { #  Fail exact match
+      print(paste("Failed", tmp$Fail))
+      unmatch_type <- cbind(foo2[i,], tmp) %>% 
+        rbind(., unmatch_type)
+    }
+  }
+  
+  #   Bad street number
+  
+  match_numb <- NULL
+  unmatch_numb <- NULL
+  foo2 <- unmatch %>% filter(Fail=="Street_num")
+  for (i in 1:nrow(foo2)){ # name repair
+    print(paste("i=",i))
+    tmp <- GeocodeHou::repair_number(foo2[i,]$pm.house, 
+                          foo2[i,]$pm.preDir,
+                          foo2[i,]$pm.street,
+                          foo2[i,]$pm.streetSuf, 
+                          foo2[i,]$site_addr_3)
+    if (tmp$Success){ #   success
+      print(paste("Success", tmp$Lat, tmp$Lon))
+      match_numb <- cbind(foo2[i,], Lat=tmp$Lat, Lon=tmp$Lon) %>% 
+        rbind(., match_numb)
+    } else { #  Fail exact match
+      print(paste("Failed", tmp$Fail))
+      unmatch_numb <- cbind(foo2[i,], tmp) %>% 
+        rbind(., unmatch_numb)
+    }
+  }
+  
+  
+  #   Bad street prefix
+  
+  match_pre <- NULL
+  unmatch_pre <- NULL
+  foo2 <- unmatch %>% filter(Fail=="Prefix")
+  for (i in 1:nrow(foo2)){ # name repair
+    print(paste("i=",i))
+    tmp <- GeocodeHou::repair_prefix(foo2[i,]$pm.house, 
+                          foo2[i,]$pm.preDir,
+                          foo2[i,]$pm.street,
+                          foo2[i,]$pm.streetSuf, 
+                          foo2[i,]$site_addr_3)
+    if (tmp$Success){ #   success
+      print(paste("Success", tmp$Lat, tmp$Lon))
+      match_pre <- cbind(foo2[i,], Lat=tmp$Lat, Lon=tmp$Lon) %>% 
+        rbind(., match_pre)
+    } else { #  Fail exact match
+      print(paste("Failed", tmp$Fail))
+      unmatch_pre <- cbind(foo2[i,], tmp) %>% 
+        rbind(., unmatch_pre)
+    }
+  }
+  
+  #     Combine all for final set
+  
+  foo2 <- rbind(match_numb, match_pre, match_type) %>% 
+    select(-starts_with("pm"), -Fail)
+  
+  df2 <- match %>% 
+    select(-starts_with("pm")) %>% 
+    rbind(., foo2)
+  
+  saveRDS(df2, "HCAD_geocode.rds")
+
+} else {
+  df2 <- readRDS("HCAD_geocode.rds")
+}
+```
+
+###        Pull out only the tax data near my study area
+
+```{r limit to streets}
+
+# create sf file
+
+Tax_data_xy <- sf::st_transform(
+                sf::st_as_sf(df2, coords = c("Lon", "Lat"), crs = google_crs),
+                  crs=CoH_crs)
+#   Extract tax data in the AOI that are near the study box 
+
+Tax_data_TF <- sf::st_contains( Parking_select_xy, 
+                               Tax_data_xy)
+
+Tax_data_xy <- Tax_data_xy[unlist(Tax_data_TF),]
+Tax_data_ll <- sf::st_transform(Tax_data_xy, crs=google_crs)
+
+tmap::tmap_options(basemaps="OpenStreetMap")
+tmap::tmap_mode("view") # set mode to interactive plots
+
+Title_small <- tribble(~Title,                  ~Lat,      ~Lon,
+                       "Commercial properties", 29.80819028, -95.4216918) %>% 
+  sf::st_as_sf(coords = c("Lon", "Lat"), crs = google_crs)
+
+tmap::tm_shape(Tax_data_ll) +
+  tmap::tm_symbols(size = "land_persqft", col="bld_persqft",
+                   scale=0.8,
+                   alpha=0.7,
+                   border.col="black",
+                   border.alpha=1,
+                   title.col="Building $/sq-ft") +
+  tmap::tm_shape(Title_small) +
+    tmap::tm_text(text="Title",
+                  size=1.5,
+                  just="left",
+                  shadow=TRUE,
+                  bg.color="white",
+                  bg.alpha=1,
+                  ) +
+  tmap::tm_scale_bar()+
+  tmap::tmap_options(unit = "mi")# +
+  # tmap::tm_layout(title="Commercial properties")
+
+
+```
 
 
 
